@@ -42,7 +42,9 @@ async function jsFallback(
   const re = new RegExp(pattern, caseInsensitive ? 'i' : '');
   const files = await fg(globPat ?? '**/*', {
     cwd: process.cwd(),
-    ignore: ['**/node_modules/**', '**/dist/**', '**/.git/**'],
+    ignore: ['**/node_modules/**', '**/dist/**', '**/.git/**', '**/.Trash/**', '**/Library/**', '**/.cache/**', '**/.npm/**', '**/.pnpm-store/**', '**/.gem/**', '**/.local/**'],
+    suppressErrors: true,
+    deep: 10,
     dot: false,
   });
   const results: string[] = [];

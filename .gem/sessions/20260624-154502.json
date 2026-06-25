@@ -1,0 +1,27 @@
+{
+  "id": "20260624-154502",
+  "createdAt": 1782283523876,
+  "updatedAt": 1782283523888,
+  "cwd": "/Users/yjun/Desktop/delab/gem",
+  "messages": [
+    {
+      "role": "user",
+      "content": "안녕"
+    },
+    {
+      "role": "assistant",
+      "content": "안녕하세요! 무엇을 도와드릴까요?"
+    },
+    {
+      "role": "user",
+      "content": "오늘 뭐해"
+    },
+    {
+      "role": "assistant",
+      "content": "안녕하세요! 저는 여기서 코딩 관련 질문이나 파일 작업을 도와드릴 준비가 되어 있어요. 오늘은 어떤 도움이 필요하신가요?"
+    }
+  ],
+  "inputHistory": [
+    "안녕"
+  ]
+}

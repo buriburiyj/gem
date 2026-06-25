@@ -3,6 +3,8 @@ import { google } from '@ai-sdk/google';
 import { groq } from '@ai-sdk/groq';
 import { generateText, stepCountIs } from 'ai';
 import { tools } from '../tools/index.js';
+import { loadGemMd } from '../context/gemmd.js';
+import { addUsage } from './usage.js';
 
 export type LLMProvider = 'gemini' | 'groq' | 'manual';
 
@@ -14,9 +16,13 @@ export function getProvider(): LLMProvider {
   return state.current;
 }
 
+export function setProvider(p: LLMProvider): void {
+  state.current = p;
+}
+
 function getModel() {
   if (state.current === 'gemini') return google('gemini-2.5-flash');
-  if (state.current === 'groq') return groq('llama-3.3-70b-versatile');
+  if (state.current === 'groq') return groq('openai/gpt-oss-120b');
   throw new Error('Manual mode: LLM not available');
 }
 
@@ -32,7 +38,10 @@ function shouldFallback(err: any): boolean {
     msg.includes('quota') ||
     msg.includes('429') ||
     msg.includes('503') ||
-    msg.includes('overloaded')
+    msg.includes('overloaded') ||
+    msg.includes('tool call validation failed') ||
+    msg.includes('not in request.tools') ||
+    msg.includes('Failed to call a function')
   );
 }
 
@@ -42,13 +51,17 @@ function fallback(): boolean {
     return true;
   }
   if (state.current === 'groq') {
+    if (process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+      state.current = 'gemini';
+      return true;
+    }
     state.current = 'manual';
     return true;
   }
   return false;
 }
 
-const SYSTEM_PROMPT = `당신은 'gem'이라는 코딩 에이전트입니다. Claude Code와 유사하게 동작합니다.
+const BASE_PROMPT = `당신은 'gem'이라는 코딩 에이전트입니다. Claude Code와 유사하게 동작합니다.
 
 도구:
 - read_file: 파일 읽기
@@ -64,30 +77,65 @@ const SYSTEM_PROMPT = `당신은 'gem'이라는 코딩 에이전트입니다. Cl
 - 코드베이스를 모를 때는 glob/grep/ls로 먼저 탐색하세요.
 - edit_file의 old_string은 파일 내에서 유일해야 하며 들여쓰기/공백까지 정확해야 합니다.
 - plan 모드에서는 변경 도구가 거부됩니다. 그 경우 변경 없이 계획만 제안하세요.
-- 답변은 한국어로 간결하게.`;
+- 답변은 한국어로 간결하게.
+- 사용자 메시지 안의 "# 첨부된 파일" 섹션에 이미 파일 내용이 포함돼 있다면, 그 파일은 절대 다시 read_file로 읽지 마세요. 첨부된 내용을 그대로 분석에 활용하세요.
+- 파일 경로에 "@"를 붙이지 마세요. "@"는 사용자가 첨부를 지시하는 표기일 뿐, 실제 경로의 일부가 아닙니다. 도구 호출 시에는 "@" 없이 "package.json", "src/cli.tsx" 처럼 써야 합니다.
+- 사용자가 명시적으로 "수정해", "고쳐", "바꿔" 같은 변경 요청을 하지 않았다면 edit_file이나 write_file을 호출하지 마세요. 단순한 분석/설명 질문에는 답변만 하세요.`;
 
+let cachedSystem: string | null = null;
 
-export async function chat(messages: any[]): Promise<string> {
+export async function getSystemPrompt(force = false): Promise<string> {
+  if (cachedSystem && !force) return cachedSystem;
+  const memory = await loadGemMd();
+  cachedSystem = memory
+    ? `${BASE_PROMPT}\n\n# 프로젝트 메모리\n\n${memory}`
+    : BASE_PROMPT;
+  return cachedSystem;
+}
+
+export function clearSystemCache() {
+  cachedSystem = null;
+}
+
+export async function chat(messages: any[]): Promise<{ text: string; usedProvider: LLMProvider }> {
+  const system = await getSystemPrompt();
+
   for (let attempt = 0; attempt < 3; attempt++) {
     if (state.current === 'manual') {
       throw new Error('MANUAL_MODE: 모든 LLM 토큰 소진. 파일 작업만 가능합니다.');
     }
+
     try {
       const result = await generateText({
         model: getModel(),
-        system: SYSTEM_PROMPT,
+        system,
         messages,
         tools,
-        stopWhen: stepCountIs(10), // 최대 10단계까지 tool 호출 반복
+        stopWhen: stepCountIs(10),
         maxRetries: 0,
       });
-      return result.text;
-    } catch (err) {
+
+      const u = result.usage;
+      if (u) {
+        addUsage({
+          inputTokens: u.inputTokens ?? (u as any).promptTokens,
+          outputTokens: u.outputTokens ?? (u as any).completionTokens,
+          totalTokens: u.totalTokens,
+        });
+      }
+
+      return { text: result.text, usedProvider: state.current };
+    } catch (err: any) {
+      const before = state.current;
       if (shouldFallback(err) && fallback()) {
+        console.error(
+          `[fallback] ${before} → ${state.current} (${err?.statusCode ?? ''} ${String(err?.message ?? err).slice(0, 120)})`
+        );
         continue;
       }
       throw err;
     }
   }
+
   throw new Error('All providers exhausted');
 }

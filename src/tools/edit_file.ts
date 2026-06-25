@@ -2,7 +2,7 @@ import { tool } from 'ai';
 import { z } from 'zod';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { emitToolCall, emitToolResult } from '../ui/events.js';
+import { emitToolCall, emitToolResult, emitDiff } from '../ui/events.js';
 import { checkPermission } from '../permissions/check.js';
 import { requestApproval } from '../permissions/prompt.js';
 
@@ -64,6 +64,8 @@ export const editFileTool = tool({
       }
 
       await writeFile(absolutePath, updated, 'utf-8');
+      // diff 표시
+      emitDiff(id, filePath, original, updated);
       emitToolResult(id, 'edit_file', true, `Edited ${occurrences} occurrence(s)`);
       return { path: filePath, replaced: occurrences };
     } catch (err: any) {

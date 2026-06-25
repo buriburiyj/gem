@@ -4,12 +4,13 @@
   "description": "Claude Code clone powered by Gemini (with Groq fallback)",
   "type": "module",
   "bin": {
-    "gem": "./dist/cli.js"
+    "claude": "./dist/cli.js"
   },
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/cli.tsx",
     "start": "node dist/cli.js",
+    "snake": "tsx src/snake/cli.tsx",
     "clean": "rm -rf dist"
   },
   "keywords": [

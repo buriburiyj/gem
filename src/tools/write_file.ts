@@ -1,8 +1,8 @@
 import { tool } from 'ai';
 import { z } from 'zod';
-import { writeFile, mkdir, stat } from 'node:fs/promises';
+import { writeFile, readFile, mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { emitToolCall, emitToolResult } from '../ui/events.js';
+import { emitToolCall, emitToolResult, emitDiff } from '../ui/events.js';
 import { checkPermission } from '../permissions/check.js';
 import { requestApproval } from '../permissions/prompt.js';
 
@@ -24,12 +24,17 @@ export const writeFileTool = tool({
       emitToolResult(id, 'write_file', false, decision.reason);
       return { error: decision.reason };
     }
+
+    const absolutePath = path.resolve(process.cwd(), filePath);
+    let oldContent = '';
+    let exists = false;
+    try {
+      await stat(absolutePath);
+      exists = true;
+      oldContent = await readFile(absolutePath, 'utf-8');
+    } catch {}
+
     if (decision.kind === 'ask') {
-      let exists = false;
-      try {
-        await stat(path.resolve(process.cwd(), filePath));
-        exists = true;
-      } catch {}
       const verb = exists ? '덮어쓰기' : '생성';
       const answer = await requestApproval(
         'write_file',
@@ -42,9 +47,10 @@ export const writeFileTool = tool({
     }
 
     try {
-      const absolutePath = path.resolve(process.cwd(), filePath);
       await mkdir(path.dirname(absolutePath), { recursive: true });
       await writeFile(absolutePath, content, 'utf-8');
+      // diff 표시
+      emitDiff(id, filePath, oldContent, content);
       const lines = content.split('\n').length;
       emitToolResult(id, 'write_file', true, `Wrote ${lines} lines`);
       return { path: filePath, bytes: content.length, lines };

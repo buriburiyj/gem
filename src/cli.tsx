@@ -1,9 +1,17 @@
 #!/usr/bin/env node
 import React, { useState, useEffect } from 'react';
 import { render, Box, Text, useApp, useInput } from 'ink';
-import TextInput from 'ink-text-input';
 import Spinner from 'ink-spinner';
-import { chat, getProvider } from './llm/client.js';
+import path from 'node:path';
+import os from 'node:os';
+import {
+  chat,
+  getProvider,
+  setProvider,
+  clearSystemCache,
+} from './llm/client.js';
+import { spawn } from 'node:child_process';
+import { getUsage, getUsageByProvider, resetUsage, estimateCost, formatCost, formatTokensCompact } from './llm/usage.js';
 import {
   getMode,
   cycleMode,
@@ -12,11 +20,43 @@ import {
   PermissionMode,
 } from './permissions/mode.js';
 import { bus, ToolEvent } from './ui/events.js';
+import { ClaudeSpinner } from './ui/spinner.js';
+import { DiffView } from './ui/diff.js';
 import {
   approvalBus,
   answerApproval,
   ApprovalRequest,
 } from './permissions/prompt.js';
+import {
+  expandMentions,
+  buildMessageWithAttachments,
+} from './context/mentions.js';
+import { runInit } from './commands/init.js';
+import { MentionInput, invalidateFileCache } from './ui/MentionInput.js';
+import {
+  Session,
+  SessionMessage,
+  newSessionId,
+  saveSession,
+  loadLatest,
+  loadSession,
+  listSessions,
+  summarizeSession,
+} from './session/store.js';
+
+const SLASH_COMMANDS = [
+  { name: 'help', description: '도움말 표시' },
+  { name: 'clear', description: '대화 초기화' },
+  { name: 'model', description: '모델 전환 (gemini/groq)' },
+  { name: 'memory', description: 'GEM.md 재로드' },
+  { name: 'init', description: 'GEM.md 생성' },
+  { name: 'cost', description: '토큰 사용량 표시' },
+  { name: 'exit', description: '종료' },
+  { name: 'resume', description: '최근 세션 이어서 진행' },
+  { name: 'sessions', description: '저장된 세션 목록' },
+
+];
+
 
 type Message = {
   role: 'user' | 'assistant' | 'system';
@@ -35,12 +75,12 @@ type DisplayItem =
       input: any;
       result?: string;
       ok?: boolean;
-    };
+    }
+  | { kind: 'diff'; id: string; filePath: string; oldText: string; newText: string };
 
 function summarizeInput(name: string, input: any): string {
   if (name === 'read_file') return input?.path ?? '';
-  if (name === 'write_file')
-    return `${input?.path ?? ''} (${input?.bytes ?? 0} bytes)`;
+  if (name === 'write_file') return input?.path ?? '';
   if (name === 'edit_file') return input?.path ?? '';
   if (name === 'bash') return input?.command ?? '';
   if (name === 'glob') return input?.pattern ?? '';
@@ -57,6 +97,61 @@ function summarizeInput(name: string, input: any): string {
   }
 }
 
+function toolDisplayName(name: string): string {
+  const map: Record<string, string> = {
+    read_file: 'Read',
+    write_file: 'Write',
+    edit_file: 'Edit',
+    bash: 'Bash',
+    glob: 'Glob',
+    grep: 'Grep',
+    ls: 'List',
+  };
+  return map[name] ?? name;
+}
+
+function shortCwd(): string {
+  const cwd = process.cwd();
+  const home = os.homedir();
+  return cwd.startsWith(home) ? '~' + cwd.slice(home.length) : cwd;
+}
+
+function formatTokens(n: number): string {
+  if (n < 1000) return `${n}`;
+  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
+  return `${(n / 1_000_000).toFixed(2)}M`;
+}
+
+function contextPercent(totalTokens: number): number {
+  const CONTEXT_SIZE = 1_000_000;
+  return Math.min(100, Math.floor((totalTokens / CONTEXT_SIZE) * 100));
+}
+
+function Banner() {
+  const cwd = process.cwd().replace(process.env.HOME ?? '', '~');
+  return (
+    <Box flexDirection="column" marginBottom={1}>
+      <Box>
+        <Text color="#D77757" bold>{'✦ '}</Text>
+        <Text bold>Welcome to </Text>
+        <Text color="#D77757" bold>gem</Text>
+        <Text dimColor>{' research preview'}</Text>
+      </Box>
+      <Box marginTop={1} flexDirection="column" borderStyle="round" borderColor="#D77757" paddingX={1}>
+        <Text dimColor>※ Tips for getting started:</Text>
+        <Text dimColor>{'  1. Ask questions, edit files, or run commands.'}</Text>
+        <Text dimColor>{'  2. Be specific for the best results.'}</Text>
+        <Text dimColor>{'  3. @ mentions a file. / lists commands.'}</Text>
+        <Text dimColor>{'  4. Shift+Tab cycles permission modes.'}</Text>
+      </Box>
+      <Box marginTop={1}>
+        <Text dimColor>{'  cwd: ' + cwd}</Text>
+      </Box>
+    </Box>
+  );
+}
+
+
 
 function App() {
   const { exit } = useApp();
@@ -64,62 +159,56 @@ function App() {
   const [history, setHistory] = useState<DisplayItem[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [busy, setBusy] = useState(false);
+  const [busyStart, setBusyStart] = useState<number>(0);
+  const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [mode, setModeState] = useState<PermissionMode>(getMode());
   const [pending, setPending] = useState<ApprovalRequest | null>(null);
+  const [inputHistory, setInputHistory] = useState<string[]>([]);
+  const [sessionId] = useState<string>(() => newSessionId());
+  const [provider, setProviderState] = useState(getProvider());
+  const [, setUsageTick] = useState(0);
 
-  // Shift+Tab 모드 순환 + 승인 키 처리
-  useInput((inputChar, key) => {
-    if (pending) {
-      if (inputChar === 'y' || key.return) {
-        answerApproval(pending.id, 'yes');
-        setHistory((h) => [
-          ...h,
-          { kind: 'info', text: `✓ 승인: ${pending.toolName}` },
-        ]);
-        setPending(null);
-      } else if (inputChar === 'n' || key.escape) {
-        answerApproval(pending.id, 'no');
-        setHistory((h) => [
-          ...h,
-          { kind: 'info', text: `✗ 거부: ${pending.toolName}` },
-        ]);
-        setPending(null);
-      } else if (inputChar === 'a') {
-        answerApproval(pending.id, 'always');
-        setHistory((h) => [
-          ...h,
-          {
-            kind: 'info',
-            text: `✓ 세션 자동 승인 활성: ${pending.toolName}`,
-          },
-        ]);
-        setPending(null);
+  useInput(
+    (inputChar, key) => {
+      if (pending) {
+        if (inputChar === 'y' || key.return) {
+          answerApproval(pending.id, 'yes');
+          setPending(null);
+        } else if (inputChar === 'n' || key.escape) {
+          answerApproval(pending.id, 'no');
+          setPending(null);
+        } else if (inputChar === 'a') {
+          answerApproval(pending.id, 'always');
+          setPending(null);
+        }
+        return;
       }
-      return;
-    }
-    if (key.shift && key.tab) {
-      const next = cycleMode();
-      setModeState(next);
-      setHistory((h) => [
-        ...h,
-        { kind: 'info', text: `⏵ 모드 변경: ${modeLabel(next)}` },
-      ]);
-    }
-  });
+      if (key.shift && key.tab) {
+        const next = cycleMode();
+        setModeState(next);
+      }
+    },
+    { isActive: pending !== null || !busy },
+  );
 
-  // 도구 이벤트 구독
+  useInput(
+    (_inputChar, key) => {
+      if (key.escape && busy && abortController) {
+        abortController.abort();
+      }
+    },
+    { isActive: busy && abortController !== null },
+  );
+
   useEffect(() => {
     const onTool = (ev: ToolEvent) => {
       if (ev.kind === 'tool_call') {
         setHistory((h) => [
           ...h,
-          {
-            kind: 'tool_call',
-            id: ev.id,
-            name: ev.name,
-            input: ev.input,
-          },
+          { kind: 'tool_call', id: ev.id, name: ev.name, input: ev.input },
         ]);
+      } else if (ev.kind === 'diff') {
+        setHistory((h) => [...h, { kind: 'diff', id: ev.id, filePath: ev.filePath, oldText: ev.oldText, newText: ev.newText }]);
       } else {
         setHistory((h) =>
           h.map((it) =>
@@ -145,6 +234,36 @@ function App() {
     const trimmed = value.trim();
     if (!trimmed || busy) return;
 
+    setInputHistory((h) => {
+      if (h.length > 0 && h[h.length - 1] === trimmed) return h;
+      const next = [...h, trimmed];
+      return next.length > 100 ? next.slice(next.length - 100) : next;
+    });
+
+    // ! 접두사: bash 직접 실행
+    if (trimmed.startsWith("!")) {
+      const command = trimmed.slice(1).trim();
+      if (!command) { setInput(""); return; }
+      setHistory((h) => [...h, { kind: "user", text: trimmed }]);
+      setInput("");
+      setBusy(true); setBusyStart(Date.now());
+      const id = Date.now().toString();
+      const proc = spawn("bash", ["-c", command], { cwd: process.cwd() });
+      let stdout = ""; let stderr = "";
+      proc.stdout.on("data", (d) => (stdout += d.toString()));
+      proc.stderr.on("data", (d) => (stderr += d.toString()));
+      proc.on("close", (code) => {
+        const output = (stdout + stderr).slice(0, 5000);
+        const lines = output.split("\n").length;
+        setHistory((h) => [...h, {
+          kind: "tool_call", id, name: "bash", input: { command },
+          result: `exit ${code} · ${lines} lines\n${output}`, ok: code === 0,
+        }]);
+        setBusy(false);
+      });
+      return;
+    }
+
     if (trimmed === '/exit' || trimmed === '/quit') {
       exit();
       return;
@@ -152,6 +271,8 @@ function App() {
     if (trimmed === '/clear') {
       setHistory([]);
       setMessages([]);
+      resetUsage();
+      setUsageTick((t) => t + 1);
       setInput('');
       return;
     }
@@ -162,89 +283,293 @@ function App() {
         {
           kind: 'info',
           text:
-            '슬래시 명령:\n  /help   도움말\n  /clear  대화 초기화\n  /exit   종료\n\n단축키:\n  Shift+Tab  모드 전환 (default → accept edits → plan)\n  y/n/a      승인 프롬프트 응답 (a = 세션 자동 승인)',
+            '슬래시 명령:\n' +
+            '  /help            도움말\n' +
+            '  /clear           대화 초기화\n' +
+            '  /init            프로젝트 분석 후 GEM.md 생성\n' +
+            '  /model [name]    모델 전환 (gemini/groq)\n' +
+            '  /memory          GEM.md 재로드\n' +
+            '  /cost            토큰 사용량 보기\n' +
+            '  /exit            종료\n\n' +
+            '메시지 안에서:\n' +
+            '  @경로/파일       파일 자동 첨부 (예: @src/cli.tsx)\n' +
+            '  @ 자동완성       Tab/Enter 선택, ↑↓ 이동, Esc 취소\n\n' +
+            '단축키:\n' +
+            '  Shift+Tab        모드 전환 (default → accept edits → plan)\n' +
+            '  y/n/a            승인 프롬프트 응답',
         },
       ]);
       setInput('');
       return;
     }
+    if (trimmed === '/cost') {
+      const byProv = getUsageByProvider();
+      const lines: string[] = [];
+      let totalUsd = 0;
+      const provs = Object.entries(byProv);
+      if (provs.length === 0) {
+        lines.push('아직 사용량이 없습니다.');
+      } else {
+        lines.push('세션 사용량' + ':');
+        for (const [prov, u] of provs) {
+          const cost = estimateCost(prov, u);
+          totalUsd += cost;
+          lines.push(
+            '  ' + prov.padEnd(8) +
+            '  in:' + formatTokensCompact(u.inputTokens).padStart(6) +
+            '  out:' + formatTokensCompact(u.outputTokens).padStart(6) +
+            '  total:' + formatTokensCompact(u.totalTokens).padStart(6) +
+            '  turns:' + String(u.turns).padStart(3) +
+            '   ' + formatCost(cost)
+          );
+        }
+        lines.push('  ─────────────────────────────────────────────');
+        lines.push('  Total: ' + formatCost(totalUsd));
+      }
+      setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: lines.join('\n') }]);
+      setInput('');
+      return;
+    }
+    if (trimmed.startsWith('/model')) {
+      const arg = trimmed.split(/\s+/)[1];
+      if (!arg) {
+        setHistory((h) => [
+          ...h,
+          { kind: 'user', text: trimmed },
+          {
+            kind: 'info',
+            text: `현재: ${getProvider()}\n사용법: /model gemini | /model groq`,
+          },
+        ]);
+      } else if (arg === 'gemini' || arg === 'groq' || arg === 'manual') {
+        setProvider(arg);
+        setProviderState(arg);
+        setHistory((h) => [
+          ...h,
+          { kind: 'user', text: trimmed },
+          { kind: 'info', text: `모델 전환: ${arg}` },
+        ]);
+      } else {
+        setHistory((h) => [
+          ...h,
+          { kind: 'user', text: trimmed },
+          { kind: 'error', text: `알 수 없는 모델: ${arg}` },
+        ]);
+      }
+      setInput('');
+      return;
+    }
+    if (trimmed === '/memory') {
+      clearSystemCache();
+      setHistory((h) => [
+        ...h,
+        { kind: 'user', text: trimmed },
+        { kind: 'info', text: 'GEM.md 재로드 완료 (다음 메시지부터 반영)' },
+      ]);
+      setInput('');
+      return;
+    }
+        if (trimmed === '/sessions') {
+      const all = await listSessions();
+      if (all.length === 0) {
+        setHistory((h) => [
+          ...h,
+          { kind: 'user', text: trimmed },
+          { kind: 'info', text: '저장된 세션이 없습니다.' },
+        ]);
+      } else {
+        const lines = all.slice(0, 20).map(summarizeSession).join('\n');
+        setHistory((h) => [
+          ...h,
+          { kind: 'user', text: trimmed },
+          { kind: 'info', text: `최근 세션 ${all.length}개:\n${lines}\n\n복원: /resume <id>` },
+        ]);
+      }
+      setInput('');
+      return;
+    }
+
+    if (trimmed.startsWith('/resume')) {
+      const arg = trimmed.split(/\s+/)[1];
+      const target = arg ? await loadSession(arg) : await loadLatest();
+      if (!target) {
+        setHistory((h) => [
+          ...h,
+          { kind: 'user', text: trimmed },
+          { kind: 'error', text: arg ? `세션을 찾을 수 없습니다: ${arg}` : '복원할 세션이 없습니다.' },
+        ]);
+        setInput('');
+        return;
+      }
+      setMessages(target.messages as Message[]);
+      setInputHistory(target.inputHistory ?? []);
+      setHistory([
+        { kind: 'info', text: `✓ 세션 복원: ${target.id} (${target.messages.length}개 메시지)` },
+        ...target.messages.map((m) =>
+          m.role === 'user'
+            ? ({ kind: 'user', text: m.content } as DisplayItem)
+            : ({ kind: 'assistant', text: m.content, provider: getProvider() } as DisplayItem),
+        ),
+      ]);
+      setInput('');
+      return;
+    }
+    if (trimmed === '/init') {
+      setHistory((h) => [
+        ...h,
+        { kind: 'user', text: trimmed },
+        { kind: 'info', text: '프로젝트 분석 중... GEM.md 생성합니다.' },
+      ]);
+      setInput('');
+      setBusy(true); setBusyStart(Date.now());
+      try {
+              // 세션 자동 저장
+        const result = await runInit();
+        if (result.ok) {
+          clearSystemCache();
+          setHistory((h) => [
+            ...h,
+            { kind: 'info', text: `✓ ${result.message}` },
+          ]);
+        } else {
+          setHistory((h) => [...h, { kind: 'error', text: result.message }]);
+        }
+      } catch (err: any) {
+        setHistory((h) => [
+          ...h,
+          { kind: 'error', text: err?.message ?? String(err) },
+        ]);
+      } finally {
+        setBusy(false);
+        setUsageTick((t) => t + 1);
+        invalidateFileCache();
+      }
+      return;
+    }
 
     setInput('');
-    setBusy(true);
+    setBusy(true); setBusyStart(Date.now());
+
+    const expansion = await expandMentions(trimmed);
+    const userContent = buildMessageWithAttachments(expansion);
 
     const newMessages: Message[] = [
       ...messages,
-      { role: 'user', content: trimmed },
+      { role: 'user', content: userContent },
     ];
-    setHistory((h) => [...h, { kind: 'user', text: trimmed }]);
+
+    let displayText = trimmed;
+    if (expansion.attachments.length > 0) {
+      const files = expansion.attachments
+        .map((a) => (a.error ? `@${a.path} (에러)` : `@${a.path}`))
+        .join(', ');
+      displayText = `${trimmed}\n  ⎿ 첨부: ${files}`;
+    }
+    setHistory((h) => [...h, { kind: 'user', text: displayText }]);
 
     try {
-      const reply = await chat(newMessages);
-      const provider = getProvider();
+      const ac = new AbortController(); setAbortController(ac);
+      const { text: reply, usedProvider } = await chat(newMessages, ac.signal);
+
+      const provNow = usedProvider;
+      setProviderState(provNow);
       setMessages([...newMessages, { role: 'assistant', content: reply }]);
-      setHistory((h) => [
-        ...h,
-        { kind: 'assistant', text: reply, provider },
-      ]);
+      // 타이핑 효과: 한 글자씩 점진적으로 표시
+      let typeIdx = -1;
+      setHistory((h) => {
+        typeIdx = h.length;
+        return [...h, { kind: 'assistant', text: '', provider: provNow }];
+      });
+      await new Promise<void>((resolve) => {
+        let i = 0;
+        const SPEED = 6;
+        const INTERVAL = 15;
+        const timer = setInterval(() => {
+          i += SPEED;
+          const done = i >= reply.length;
+          const slice = done ? reply : reply.slice(0, i);
+          setHistory((h) => {
+            if (typeIdx < 0) return h;
+            const item = h[typeIdx];
+            if (!item || item.kind !== 'assistant') return h;
+            const nh = [...h];
+            nh[typeIdx] = { ...item, text: slice };
+            return nh;
+          });
+          if (done) { clearInterval(timer); resolve(); }
+        }, INTERVAL);
+      });
     } catch (err: any) {
-      setHistory((h) => [
-        ...h,
-        { kind: 'error', text: err?.message ?? String(err) },
-      ]);
+      if (err?.name === 'AbortError' || String(err?.message ?? '').includes('aborted')) {
+        setHistory((h) => [...h, { kind: 'info', text: '⎿  중단됨 (esc)' }]);
+      } else {
+        setHistory((h) => [
+          ...h,
+          { kind: 'error', text: err?.message ?? String(err) },
+        ]);
+      }
     } finally {
       setBusy(false);
+      setUsageTick((t) => t + 1);
+      invalidateFileCache();
     }
   };
 
-  return (
-    <Box flexDirection="column" padding={1}>
-      {/* 헤더 */}
-      <Box>
-        <Text color="cyan" bold>
-          ✦ gem{' '}
-        </Text>
-        <Text dimColor>v0.0.1 </Text>
-        <Text color="yellow">[{getProvider()}] </Text>
-        <Text color={modeColor(mode)}>⏵ {modeLabel(mode)}</Text>
-      </Box>
-      <Box marginBottom={1}>
-        <Text dimColor>
-          /help 도움말 · /clear 초기화 · /exit 종료 · Shift+Tab 모드 전환
-        </Text>
-      </Box>
+  const u = getUsage();
+  const ctxPct = contextPercent(u.totalTokens);
 
-      {/* 대화 기록 */}
+  return (
+    <Box flexDirection="column">
+      <Banner />
+
       {history.map((item, i) => {
         if (item.kind === 'user') {
+          const lines = item.text.split('\n');
           return (
-            <Box key={i} marginTop={1}>
-              <Text color="green" bold>{'> '}</Text>
-              <Text>{item.text}</Text>
+            <Box key={i} marginTop={1} flexDirection="column">
+              <Box>
+                <Text color="gray">{'> '}</Text>
+                <Text>{lines[0]}</Text>
+              </Box>
+              {lines.slice(1).map((line, j) => (
+                <Box key={j}>
+                  <Text dimColor>{line}</Text>
+                </Box>
+              ))}
             </Box>
           );
         }
         if (item.kind === 'assistant') {
           return (
             <Box key={i} marginTop={1} flexDirection="column">
-              <Text color="cyan" bold>
-                ✦ gem <Text dimColor>[{item.provider}]</Text>
-              </Text>
-              <Text>{item.text}</Text>
+              <Box>
+                <Text color="magentaBright">{'⏺ '}</Text>
+                <Text>{item.text}</Text>
+              </Box>
+            </Box>
+          );
+        }
+        if (item.kind === 'diff') {
+          return (
+            <Box key={i} marginTop={1}>
+              <DiffView oldText={item.oldText} newText={item.newText} filePath={item.filePath} />
             </Box>
           );
         }
         if (item.kind === 'tool_call') {
           const arg = summarizeInput(item.name, item.input);
+          const display = toolDisplayName(item.name);
           return (
             <Box key={i} marginTop={1} flexDirection="column">
               <Box>
-                <Text color={item.ok === false ? 'red' : 'magenta'}>● </Text>
-                <Text bold>{item.name}</Text>
+                <Text color={item.ok === false ? 'red' : 'green'}>{'⏺ '}</Text>
+                <Text bold>{display}</Text>
                 <Text dimColor>({arg})</Text>
               </Box>
               {item.result !== undefined && (
-                <Box marginLeft={2}>
-                  <Text dimColor>⎿  {item.result}</Text>
+                <Box>
+                  <Text color={item.ok === false ? 'red' : 'gray'}>{'  ⎿  '}</Text>
+                  <Text dimColor>{item.result}</Text>
                 </Box>
               )}
             </Box>
@@ -253,18 +578,22 @@ function App() {
         if (item.kind === 'error') {
           return (
             <Box key={i} marginTop={1}>
-              <Text color="red">✗ {item.text}</Text>
+              <Text color="red">{'⏺ '}</Text>
+              <Text color="red">{item.text}</Text>
             </Box>
           );
         }
         return (
-          <Box key={i} marginTop={1}>
-            <Text dimColor>{item.text}</Text>
+          <Box key={i} marginTop={1} flexDirection="column">
+            {item.text.split('\n').map((line, j) => (
+              <Box key={j}>
+                <Text dimColor>{line}</Text>
+              </Box>
+            ))}
           </Box>
         );
       })}
 
-      {/* 승인 프롬프트 */}
       {pending && (
         <Box
           marginTop={1}
@@ -274,9 +603,7 @@ function App() {
           paddingX={1}
         >
           <Box>
-            <Text color="yellow" bold>
-              ⚠ 승인 필요:{' '}
-            </Text>
+            <Text color="yellow" bold>{'⚠ 승인 필요: '}</Text>
             <Text bold>{pending.toolName}</Text>
           </Box>
           <Box>
@@ -284,39 +611,57 @@ function App() {
           </Box>
           {pending.detail && (
             <Box marginTop={1} flexDirection="column">
-              <Text dimColor>{pending.detail}</Text>
+              {pending.detail.split('\n').map((l, k) => (
+                <Text key={k} dimColor>{l}</Text>
+              ))}
             </Box>
           )}
           <Box marginTop={1}>
-            <Text>
-              <Text color="green">y</Text>=승인{'  '}
-              <Text color="red">n</Text>=거부{'  '}
-              <Text color="cyan">a</Text>=세션 동안 자동 승인
-            </Text>
+            <Text color="green">y</Text>
+            <Text dimColor>=승인  </Text>
+            <Text color="red">n</Text>
+            <Text dimColor>=거부  </Text>
+            <Text color="cyan">a</Text>
+            <Text dimColor>=세션 동안 자동 승인</Text>
           </Box>
         </Box>
       )}
 
-      {/* 입력창 / 로딩 */}
       {!pending && (
-        <Box marginTop={1}>
+        <Box
+          marginTop={1}
+          borderStyle="round"
+          borderColor={busy ? 'yellow' : 'gray'}
+          paddingX={1}
+        >
           {busy ? (
-            <Text color="yellow">
-              <Spinner type="dots" /> 생각 중...
-            </Text>
+            <Box>
+              <ClaudeSpinner startTime={busyStart} />
+            </Box>
           ) : (
-            <>
-              <Text color="green" bold>{'> '}</Text>
-              <TextInput
-                value={input}
-                onChange={setInput}
-                onSubmit={handleSubmit}
-                placeholder="메시지를 입력하세요 (/help)"
-              />
-            </>
+            <MentionInput
+              value={input}
+              onChange={setInput}
+              onSubmit={handleSubmit}
+              placeholder="무엇을 도와드릴까요?"
+              commands={SLASH_COMMANDS}
+          history={inputHistory}
+            />
           )}
         </Box>
       )}
+
+      <Box marginTop={1} paddingX={1}>
+        <Text color={modeColor(mode)}>⏵⏵ {modeLabel(mode)}</Text>
+        <Text dimColor>{' · '}</Text>
+        <Text color="yellow">◆ {provider}</Text>
+        <Text dimColor>{' · '}</Text>
+        <Text dimColor>📁 {path.basename(process.cwd())}</Text>
+        <Text dimColor>{' · '}</Text>
+        <Text dimColor>
+          ⚡ {formatTokens(u.totalTokens)} · {u.turns}t
+        </Text>
+      </Box>
     </Box>
   );
 }
