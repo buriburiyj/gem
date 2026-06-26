@@ -46,7 +46,7 @@ import {
 import { StartupWizard } from './ui/StartupWizard.js';
 import { loadConfig, saveConfig } from './config/store.js';
 import { setThemeMode, getColors, getThemeLabel, ThemeMode } from './ui/theme.js';
-import { setOllamaModel, getOllamaModel } from './llm/client.js';
+import { setOllamaModel } from './llm/client.js';
 
 const SLASH_COMMANDS = [
   { name: 'help', description: '도움말 표시' },
@@ -55,7 +55,6 @@ const SLASH_COMMANDS = [
   { name: 'setup', description: '시작 위저드 다시 띄우기' },
   { name: 'theme', description: '테마 변경 (light/dark/auto)' },
   { name: 'backend', description: '백엔드 변경 (gemini/groq/ollama)' },
-  { name: 'ollama-model', description: 'Ollama 모델 전환 (qwen2.5-coder:7b 등)' },
   { name: 'memory', description: 'GEM.md 재로드' },
   { name: 'init', description: 'GEM.md 생성' },
   { name: 'cost', description: '토큰 사용량 표시' },
@@ -408,26 +407,6 @@ function App() {
           ...h,
           { kind: 'user', text: trimmed },
           { kind: 'error', text: `알 수 없는 백엔드: ${arg}` },
-        ]);
-      }
-      setInput('');
-      return;
-    }
-    if (trimmed.startsWith('/ollama-model')) {
-      const arg = trimmed.split(/\s+/).slice(1).join(' ').trim();
-      if (!arg) {
-        setHistory((h) => [
-          ...h,
-          { kind: 'user', text: trimmed },
-          { kind: 'info', text: `현재 Ollama 모델: ${getOllamaModel()}\n사용법: /ollama-model qwen2.5-coder:7b | /ollama-model llama3.1:8b | /ollama-model qwen2.5:7b` },
-        ]);
-      } else {
-        setOllamaModel(arg);
-        saveConfig({ ollamaModel: arg });
-        setHistory((h) => [
-          ...h,
-          { kind: 'user', text: trimmed },
-          { kind: 'info', text: `Ollama 모델 변경: ${arg}` },
         ]);
       }
       setInput('');

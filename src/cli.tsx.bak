@@ -43,19 +43,11 @@ import {
   listSessions,
   summarizeSession,
 } from './session/store.js';
-import { StartupWizard } from './ui/StartupWizard.js';
-import { loadConfig, saveConfig } from './config/store.js';
-import { setThemeMode, getColors, getThemeLabel, ThemeMode } from './ui/theme.js';
-import { setOllamaModel, getOllamaModel } from './llm/client.js';
 
 const SLASH_COMMANDS = [
   { name: 'help', description: '도움말 표시' },
   { name: 'clear', description: '대화 초기화' },
-  { name: 'model', description: '모델 전환 (gemini/groq/ollama)' },
-  { name: 'setup', description: '시작 위저드 다시 띄우기' },
-  { name: 'theme', description: '테마 변경 (light/dark/auto)' },
-  { name: 'backend', description: '백엔드 변경 (gemini/groq/ollama)' },
-  { name: 'ollama-model', description: 'Ollama 모델 전환 (qwen2.5-coder:7b 등)' },
+  { name: 'model', description: '모델 전환 (gemini/groq)' },
   { name: 'memory', description: 'GEM.md 재로드' },
   { name: 'init', description: 'GEM.md 생성' },
   { name: 'cost', description: '토큰 사용량 표시' },
@@ -175,18 +167,6 @@ function App() {
   const [sessionId] = useState<string>(() => newSessionId());
   const [provider, setProviderState] = useState(getProvider());
   const [, setUsageTick] = useState(0);
-    const [config, setConfig] = useState(() => loadConfig());
-  const [wizardDone, setWizardDone] = useState(false);
-
-  useEffect(() => {
-    if (config.configured) {
-      setThemeMode(config.theme);
-      setProvider(config.backend);
-      setOllamaModel(config.ollamaModel);
-      setProviderState(config.backend);
-    }
-  }, []);
-
 
   useInput(
     (inputChar, key) => {
@@ -350,89 +330,6 @@ function App() {
       setInput('');
       return;
     }
-    if (trimmed === '/setup') {
-      setWizardDone(false);
-      setHistory((h) => [
-        ...h,
-        { kind: 'user', text: trimmed },
-        { kind: 'info', text: '시작 위저드를 다시 띄웁니다...' },
-      ]);
-      setInput('');
-      return;
-    }
-    if (trimmed.startsWith('/theme')) {
-      const arg = trimmed.split(/\s+/)[1];
-      if (!arg) {
-        setHistory((h) => [
-          ...h,
-          { kind: 'user', text: trimmed },
-          { kind: 'info', text: `사용법: /theme light | /theme dark | /theme auto` },
-        ]);
-      } else if (arg === 'light' || arg === 'dark' || arg === 'auto') {
-        setThemeMode(arg);
-        saveConfig({ theme: arg });
-        setHistory((h) => [
-          ...h,
-          { kind: 'user', text: trimmed },
-          { kind: 'info', text: `테마 변경: ${getThemeLabel(arg)}` },
-        ]);
-      } else {
-        setHistory((h) => [
-          ...h,
-          { kind: 'user', text: trimmed },
-          { kind: 'error', text: `알 수 없는 테마: ${arg}` },
-        ]);
-      }
-      setInput('');
-      return;
-    }
-    if (trimmed.startsWith('/backend')) {
-      const arg = trimmed.split(/\s+/)[1];
-      if (!arg) {
-        setHistory((h) => [
-          ...h,
-          { kind: 'user', text: trimmed },
-          { kind: 'info', text: `현재: ${getProvider()}\n사용법: /backend gemini | /backend groq | /backend ollama` },
-        ]);
-      } else if (arg === 'gemini' || arg === 'groq' || arg === 'ollama') {
-        setProvider(arg);
-        setProviderState(arg);
-        saveConfig({ backend: arg });
-        setHistory((h) => [
-          ...h,
-          { kind: 'user', text: trimmed },
-          { kind: 'info', text: `백엔드 변경: ${arg}` },
-        ]);
-      } else {
-        setHistory((h) => [
-          ...h,
-          { kind: 'user', text: trimmed },
-          { kind: 'error', text: `알 수 없는 백엔드: ${arg}` },
-        ]);
-      }
-      setInput('');
-      return;
-    }
-    if (trimmed.startsWith('/ollama-model')) {
-      const arg = trimmed.split(/\s+/).slice(1).join(' ').trim();
-      if (!arg) {
-        setHistory((h) => [
-          ...h,
-          { kind: 'user', text: trimmed },
-          { kind: 'info', text: `현재 Ollama 모델: ${getOllamaModel()}\n사용법: /ollama-model qwen2.5-coder:7b | /ollama-model llama3.1:8b | /ollama-model qwen2.5:7b` },
-        ]);
-      } else {
-        setOllamaModel(arg);
-        saveConfig({ ollamaModel: arg });
-        setHistory((h) => [
-          ...h,
-          { kind: 'user', text: trimmed },
-          { kind: 'info', text: `Ollama 모델 변경: ${arg}` },
-        ]);
-      }
-      setInput('');
-      return;
-    }
     if (trimmed.startsWith('/model')) {
       const arg = trimmed.split(/\s+/)[1];
       if (!arg) {
@@ -444,7 +341,7 @@ function App() {
             text: `현재: ${getProvider()}\n사용법: /model gemini | /model groq`,
           },
         ]);
-      } else if (arg === 'gemini' || arg === 'groq' || arg === 'ollama' || arg === 'manual') {
+      } else if (arg === 'gemini' || arg === 'groq' || arg === 'manual') {
         setProvider(arg);
         setProviderState(arg);
         setHistory((h) => [
@@ -621,20 +518,6 @@ function App() {
   const u = getUsage();
   const ctxPct = contextPercent(u.totalTokens);
 
-  if (!wizardDone) {
-    return (
-      <StartupWizard
-        onDone={(theme, backend) => {
-          setThemeMode(theme);
-          setProvider(backend);
-          setProviderState(backend);
-          saveConfig({ theme, backend, configured: true });
-          setConfig(loadConfig());
-          setWizardDone(true);
-        }}
-      />
-    );
-  }
   return (
     <Box flexDirection="column">
       <Banner />

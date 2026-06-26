@@ -25,7 +25,10 @@ export const writeFileTool = tool({
       return { error: decision.reason };
     }
 
-    const absolutePath = path.resolve(process.cwd(), filePath);
+    const expandedPath = filePath.startsWith('~/') || filePath === '~'
+      ? filePath.replace(/^~/, process.env.HOME || '')
+      : filePath;
+    const absolutePath = path.resolve(process.cwd(), expandedPath);
     let oldContent = '';
     let exists = false;
     try {

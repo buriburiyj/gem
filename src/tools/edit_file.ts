@@ -31,7 +31,10 @@ export const editFileTool = tool({
     }
 
     try {
-      const absolutePath = path.resolve(process.cwd(), filePath);
+      const expandedPath = filePath.startsWith('~/') || filePath === '~'
+        ? filePath.replace(/^~/, process.env.HOME || '')
+        : filePath;
+      const absolutePath = path.resolve(process.cwd(), expandedPath);
       const original = await readFile(absolutePath, 'utf-8');
 
       const occurrences = original.split(old_string).length - 1;

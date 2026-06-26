@@ -28,7 +28,10 @@ export const lsTool = tool({
     }
 
     try {
-      const abs = path.resolve(process.cwd(), target);
+      const expandedPath = target.startsWith('~/') || target === '~'
+        ? target.replace(/^~/, process.env.HOME || '')
+        : target;
+      const abs = path.resolve(process.cwd(), expandedPath);
       const entries = await readdir(abs);
       const items: Array<{ name: string; type: string; size?: number }> = [];
       for (const name of entries) {

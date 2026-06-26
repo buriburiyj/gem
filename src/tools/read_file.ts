@@ -24,7 +24,10 @@ export const readFileTool = tool({
     }
 
     try {
-      const absolutePath = path.resolve(process.cwd(), filePath);
+      const expandedPath = filePath.startsWith('~/') || filePath === '~'
+        ? filePath.replace(/^~/, process.env.HOME || '')
+        : filePath;
+      const absolutePath = path.resolve(process.cwd(), expandedPath);
       const content = await readFile(absolutePath, 'utf-8');
       const MAX = 30000;
       const lines = content.split('\n').length;
