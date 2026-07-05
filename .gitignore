@@ -6,3 +6,4 @@ dist/
 *.log
 .gem/settings.local.json
 GEM.local.md
+.gem/
