@@ -58,6 +58,7 @@ const SLASH_COMMANDS = [
   { name: 'memory', description: 'CLAUDE.md 재로드' },
   { name: 'init', description: 'CLAUDE.md 생성' },
   { name: 'cost', description: '토큰 사용량 표시' },
+  { name: 'context', description: '컨텍스트 사용량 표시' },
   { name: 'exit', description: '종료' },
   { name: 'resume', description: '최근 세션 이어서 진행' },
   { name: 'sessions', description: '저장된 세션 목록' },
@@ -395,6 +396,27 @@ function App() {
         lines.push('  ─────────────────────────────');
         lines.push('  Total: ' + formatCost(totalUsd));
       }
+      setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: lines.join('\n') }]);
+      setInput('');
+      return;
+    }
+    if (trimmed === '/context') {
+      const uu = getUsage();
+      const CONTEXT_SIZE = 1_000_000;
+      const used = uu.totalTokens;
+      const pct = Math.min(100, (used / CONTEXT_SIZE) * 100);
+      const filled = Math.round((pct / 100) * 30);
+      const bar = '█'.repeat(filled) + '░'.repeat(30 - filled);
+      const lines = [
+        'Context Usage',
+        '',
+        '  [' + bar + '] ' + pct.toFixed(1) + '%',
+        '',
+        '  used:      ' + formatTokensCompact(used) + ' tokens',
+        '  remaining: ' + formatTokensCompact(CONTEXT_SIZE - used) + ' tokens',
+        '  window:    ' + formatTokensCompact(CONTEXT_SIZE) + ' tokens',
+        '  turns:     ' + String(uu.turns),
+      ];
       setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: lines.join('\n') }]);
       setInput('');
       return;
