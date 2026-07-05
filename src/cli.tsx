@@ -209,6 +209,7 @@ function App() {
   const [busyStart, setBusyStart] = useState<number>(0);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [mode, setModeState] = useState<PermissionMode>(getMode());
+  const [modeChanged, setModeChanged] = useState(false);
   const [pending, setPending] = useState<ApprovalRequest | null>(null);
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const [sessionId] = useState<string>(() => newSessionId());
@@ -259,6 +260,8 @@ function App() {
       if (key.shift && key.tab) {
         const next = cycleMode();
         setModeState(next);
+        setModeChanged(true);
+        setTimeout(() => setModeChanged(false), 2500);
       }
     },
     { isActive: pending !== null || !busy },
@@ -690,7 +693,7 @@ function App() {
       </Box>
 
       <Box marginTop={1} paddingX={1}>
-        <Text color={modeColor(mode)}>⏵⏵ {modeLabel(mode)}</Text>
+        <Text color={modeColor(mode)} bold={modeChanged}>⏵⏵ {modeLabel(mode)}{modeChanged ? '  ◄ shift+tab' : ''}</Text>
         <Text dimColor>{' · '}</Text>
         <Text color={colors.signature}>◆ {provider}</Text>
         <Text dimColor>{' · '}</Text>
