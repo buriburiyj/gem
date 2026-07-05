@@ -201,6 +201,61 @@ function TrustDialog({ onConfirm }: { onConfirm: () => void }) {
   );
 }
 
+function TranscriptView({
+  history,
+  onClose,
+}: {
+  history: DisplayItem[];
+  onClose: () => void;
+}) {
+  const colors = getColors();
+  useInput(() => onClose());
+  const tools = history.filter((it) => it.kind === 'tool_call') as Extract<
+    DisplayItem,
+    { kind: 'tool_call' }
+  >[];
+  return (
+    <Box flexDirection="column" marginY={1}>
+      <Box borderStyle="round" borderColor={colors.signature} paddingX={1}>
+        <Text bold>Transcript · tool calls ({tools.length})</Text>
+      </Box>
+      {tools.length === 0 ? (
+        <Box paddingX={1} marginTop={1}>
+          <Text dimColor>아직 도구 호출이 없습니다.</Text>
+        </Box>
+      ) : (
+        tools.map((t, i) => (
+          <Box key={t.id + i} flexDirection="column" paddingX={1} marginTop={1}>
+            <Box>
+              <Text color={t.ok === false ? 'red' : colors.signature} bold>
+                {t.ok === false ? '✗ ' : '⏺ '}
+              </Text>
+              <Text bold>{t.name}</Text>
+            </Box>
+            <Box paddingLeft={2}>
+              <Text dimColor>
+                input: {JSON.stringify(t.input).slice(0, 200)}
+              </Text>
+            </Box>
+            {t.result ? (
+              <Box paddingLeft={2}>
+                <Text dimColor>result: {t.result.slice(0, 400)}</Text>
+              </Box>
+            ) : (
+              <Box paddingLeft={2}>
+                <Text dimColor>result: (없음)</Text>
+              </Box>
+            )}
+          </Box>
+        ))
+      )}
+      <Box marginTop={1} paddingX={1}>
+        <Text dimColor>아무 키나 눌러 닫기</Text>
+      </Box>
+    </Box>
+  );
+}
+
 function App() {
   const { exit } = useApp();
   const [input, setInput] = useState('');
@@ -211,6 +266,7 @@ function App() {
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [mode, setModeState] = useState<PermissionMode>(getMode());
   const [modeChanged, setModeChanged] = useState(false);
+  const [showTranscript, setShowTranscript] = useState(false);
   const [pending, setPending] = useState<ApprovalRequest | null>(null);
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const [sessionId] = useState<string>(() => newSessionId());
@@ -256,6 +312,10 @@ function App() {
           answerApproval(pending.id, 'always');
           setPending(null);
         }
+        return;
+      }
+      if (key.ctrl && inputChar === 'o') {
+        setShowTranscript(true);
         return;
       }
       if (key.shift && key.tab) {
@@ -578,6 +638,9 @@ function App() {
   const ctxPct = contextPercent(u.totalTokens);
   const colors = getColors();
 
+  if (showTranscript) {
+    return <TranscriptView history={history} onClose={() => setShowTranscript(false)} />;
+  }
   if (!trusted) {
     return (
       <TrustDialog
