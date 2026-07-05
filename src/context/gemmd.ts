@@ -15,10 +15,10 @@ export async function loadGemMd(): Promise<string> {
   const home = os.homedir();
 
   const sources: Array<{ label: string; path: string }> = [
-    { label: 'User', path: path.join(home, '.gem', 'GEM.md') },
-    { label: 'Project', path: path.join(cwd, 'GEM.md') },
-    { label: 'Project (local)', path: path.join(cwd, 'GEM.local.md') },
-    { label: 'Project (.gem)', path: path.join(cwd, '.gem', 'GEM.md') },
+    { label: 'User', path: path.join(home, '.claude', 'CLAUDE.md') },
+    { label: 'Project', path: path.join(cwd, 'CLAUDE.md') },
+    { label: 'Project (local)', path: path.join(cwd, 'CLAUDE.local.md') },
+    { label: 'Project (.claude)', path: path.join(cwd, '.claude', 'CLAUDE.md') },
   ];
 
   const parts: string[] = [];

@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import React, { useState, useEffect } from 'react';
 import { render, Box, Text, useApp, useInput } from 'ink';
-import Spinner from 'ink-spinner';
 import path from 'node:path';
 import os from 'node:os';
 import {
@@ -55,16 +54,14 @@ const SLASH_COMMANDS = [
   { name: 'setup', description: '시작 위저드 다시 띄우기' },
   { name: 'theme', description: '테마 변경 (light/dark/auto)' },
   { name: 'backend', description: '백엔드 변경 (gemini/groq/ollama)' },
-  { name: 'ollama-model', description: 'Ollama 모델 전환 (qwen2.5-coder:7b 등)' },
-  { name: 'memory', description: 'GEM.md 재로드' },
-  { name: 'init', description: 'GEM.md 생성' },
+  { name: 'ollama-model', description: 'Ollama 모델 전환' },
+  { name: 'memory', description: 'CLAUDE.md 재로드' },
+  { name: 'init', description: 'CLAUDE.md 생성' },
   { name: 'cost', description: '토큰 사용량 표시' },
   { name: 'exit', description: '종료' },
   { name: 'resume', description: '최근 세션 이어서 진행' },
   { name: 'sessions', description: '저장된 세션 목록' },
-
 ];
-
 
 type Message = {
   role: 'user' | 'assistant' | 'system';
@@ -118,12 +115,6 @@ function toolDisplayName(name: string): string {
   return map[name] ?? name;
 }
 
-function shortCwd(): string {
-  const cwd = process.cwd();
-  const home = os.homedir();
-  return cwd.startsWith(home) ? '~' + cwd.slice(home.length) : cwd;
-}
-
 function formatTokens(n: number): string {
   if (n < 1000) return `${n}`;
   if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
@@ -137,29 +128,77 @@ function contextPercent(totalTokens: number): number {
 
 function Banner() {
   const cwd = process.cwd().replace(process.env.HOME ?? '', '~');
+  const colors = getColors();
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Box>
-        <Text color="#D77757" bold>{'✦ '}</Text>
-        <Text bold>Welcome to </Text>
-        <Text color="#D77757" bold>gem</Text>
-        <Text dimColor>{' research preview'}</Text>
+      <Box
+        flexDirection="column"
+        borderStyle="round"
+        borderColor={colors.signature}
+        paddingX={1}
+      >
+        <Box>
+          <Text color={colors.signature} bold>{'✳ '}</Text>
+          <Text bold>Welcome to Claude Code</Text>
+        </Box>
+        <Box marginTop={1} paddingLeft={2}>
+          <Text dimColor>{cwd}</Text>
+        </Box>
       </Box>
-      <Box marginTop={1} flexDirection="column" borderStyle="round" borderColor="#D77757" paddingX={1}>
-        <Text dimColor>※ Tips for getting started:</Text>
-        <Text dimColor>{'  1. Ask questions, edit files, or run commands.'}</Text>
-        <Text dimColor>{'  2. Be specific for the best results.'}</Text>
-        <Text dimColor>{'  3. @ mentions a file. / lists commands.'}</Text>
-        <Text dimColor>{'  4. Shift+Tab cycles permission modes.'}</Text>
+      <Box marginTop={1} paddingX={1} flexDirection="column">
+        <Text color={colors.signature} bold>Tips for getting started</Text>
+        <Text dimColor>Ask Claude to create a new app or edit files</Text>
       </Box>
-      <Box marginTop={1}>
-        <Text dimColor>{'  cwd: ' + cwd}</Text>
+      <Box marginTop={1} paddingX={1}>
+        <Text dimColor>? for shortcuts</Text>
       </Box>
     </Box>
   );
 }
 
-
+function TrustDialog({ onConfirm }: { onConfirm: () => void }) {
+  const colors = getColors();
+  const [sel, setSel] = useState(0);
+  const cwd = process.cwd();
+  useInput((_input, key) => {
+    if (key.upArrow || key.downArrow) setSel((s) => (s === 0 ? 1 : 0));
+    if (key.return) {
+      if (sel === 0) onConfirm();
+      else process.exit(0);
+    }
+  });
+  return (
+    <Box flexDirection="column" marginY={1}>
+      <Box
+        flexDirection="column"
+        borderStyle="round"
+        borderColor={colors.signature}
+        paddingX={2}
+        paddingY={1}
+      >
+        <Text bold>Do you trust the files in this folder?</Text>
+        <Box marginTop={1}>
+          <Text color={colors.signature}>{cwd}</Text>
+        </Box>
+        <Box marginTop={1} flexDirection="column">
+          <Text dimColor>Claude Code may read, write, and execute files</Text>
+          <Text dimColor>in this folder. Only proceed if you trust it.</Text>
+        </Box>
+        <Box marginTop={1} flexDirection="column">
+          <Text color={sel === 0 ? colors.signature : undefined}>
+            {sel === 0 ? '❯ ' : '  '}Yes, proceed
+          </Text>
+          <Text color={sel === 1 ? colors.signature : undefined}>
+            {sel === 1 ? '❯ ' : '  '}No, exit
+          </Text>
+        </Box>
+      </Box>
+      <Box marginTop={1} paddingX={1}>
+        <Text dimColor>↑↓ to select · Enter to confirm</Text>
+      </Box>
+    </Box>
+  );
+}
 
 function App() {
   const { exit } = useApp();
@@ -175,8 +214,9 @@ function App() {
   const [sessionId] = useState<string>(() => newSessionId());
   const [provider, setProviderState] = useState(getProvider());
   const [, setUsageTick] = useState(0);
-    const [config, setConfig] = useState(() => loadConfig());
+  const [config, setConfig] = useState(() => loadConfig());
   const [wizardDone, setWizardDone] = useState(false);
+  const [trusted, setTrusted] = useState<boolean>(() => loadConfig().trusted === true);
 
   useEffect(() => {
     if (config.configured) {
@@ -184,9 +224,22 @@ function App() {
       setProvider(config.backend);
       setOllamaModel(config.ollamaModel);
       setProviderState(config.backend);
+      setWizardDone(true);
     }
   }, []);
 
+  useEffect(() => {
+    if (messages.length === 0) return;
+    const session: Session = {
+      id: sessionId,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      cwd: process.cwd(),
+      messages: messages as SessionMessage[],
+      inputHistory,
+    };
+    saveSession(session).catch(() => {});
+  }, [messages]);
 
   useInput(
     (inputChar, key) => {
@@ -260,64 +313,57 @@ function App() {
       return next.length > 100 ? next.slice(next.length - 100) : next;
     });
 
-    // ! 접두사: bash 직접 실행
-    if (trimmed.startsWith("!")) {
+    if (trimmed.startsWith('!')) {
       const command = trimmed.slice(1).trim();
-      if (!command) { setInput(""); return; }
-      setHistory((h) => [...h, { kind: "user", text: trimmed }]);
-      setInput("");
+      if (!command) { setInput(''); return; }
+      setHistory((h) => [...h, { kind: 'user', text: trimmed }]);
+      setInput('');
       setBusy(true); setBusyStart(Date.now());
+      const ac = new AbortController(); setAbortController(ac);
       const id = Date.now().toString();
-      const proc = spawn("bash", ["-c", command], { cwd: process.cwd() });
-      let stdout = ""; let stderr = "";
-      proc.stdout.on("data", (d) => (stdout += d.toString()));
-      proc.stderr.on("data", (d) => (stderr += d.toString()));
-      proc.on("close", (code) => {
+      const proc = spawn('bash', ['-c', command], { cwd: process.cwd() });
+      ac.signal.addEventListener('abort', () => proc.kill('SIGTERM'));
+      let stdout = ''; let stderr = '';
+      proc.stdout.on('data', (d) => (stdout += d.toString()));
+      proc.stderr.on('data', (d) => (stderr += d.toString()));
+      proc.on('close', (code) => {
         const output = (stdout + stderr).slice(0, 5000);
-        const lines = output.split("\n").length;
+        const lines = output.split('\n').length;
         setHistory((h) => [...h, {
-          kind: "tool_call", id, name: "bash", input: { command },
+          kind: 'tool_call', id, name: 'bash', input: { command },
           result: `exit ${code} · ${lines} lines\n${output}`, ok: code === 0,
         }]);
         setBusy(false);
+        setAbortController(null);
       });
       return;
     }
 
-    if (trimmed === '/exit' || trimmed === '/quit') {
-      exit();
-      return;
-    }
+    if (trimmed === '/exit' || trimmed === '/quit') { exit(); return; }
     if (trimmed === '/clear') {
-      setHistory([]);
-      setMessages([]);
-      resetUsage();
-      setUsageTick((t) => t + 1);
-      setInput('');
+      setHistory([]); setMessages([]); resetUsage();
+      setUsageTick((t) => t + 1); setInput('');
       return;
     }
     if (trimmed === '/help') {
       setHistory((h) => [
         ...h,
         { kind: 'user', text: trimmed },
-        {
-          kind: 'info',
-          text:
-            '슬래시 명령:\n' +
-            '  /help            도움말\n' +
-            '  /clear           대화 초기화\n' +
-            '  /init            프로젝트 분석 후 GEM.md 생성\n' +
-            '  /model [name]    모델 전환 (gemini/groq)\n' +
-            '  /memory          GEM.md 재로드\n' +
-            '  /cost            토큰 사용량 보기\n' +
-            '  /exit            종료\n\n' +
-            '메시지 안에서:\n' +
-            '  @경로/파일       파일 자동 첨부 (예: @src/cli.tsx)\n' +
-            '  @ 자동완성       Tab/Enter 선택, ↑↓ 이동, Esc 취소\n\n' +
-            '단축키:\n' +
-            '  Shift+Tab        모드 전환 (default → accept edits → plan)\n' +
-            '  y/n/a            승인 프롬프트 응답',
-        },
+        { kind: 'info', text:
+          '슬래시 명령:\n' +
+          '  /help            도움말\n' +
+          '  /clear           대화 초기화\n' +
+          '  /init            프로젝트 분석 후 CLAUDE.md 생성\n' +
+          '  /model [name]    모델 전환 (gemini/groq)\n' +
+          '  /memory          CLAUDE.md 재로드\n' +
+          '  /cost            토큰 사용량 보기\n' +
+          '  /exit            종료\n\n' +
+          '메시지 안에서:\n' +
+          '  @경로/파일       파일 자동 첨부\n' +
+          '  !명령            bash 직접 실행\n\n' +
+          '단축키:\n' +
+          '  Shift+Tab        모드 전환\n' +
+          '  y/n/a            승인 프롬프트 응답' },
       ]);
       setInput('');
       return;
@@ -330,20 +376,20 @@ function App() {
       if (provs.length === 0) {
         lines.push('아직 사용량이 없습니다.');
       } else {
-        lines.push('세션 사용량' + ':');
-        for (const [prov, u] of provs) {
-          const cost = estimateCost(prov, u);
+        lines.push('세션 사용량:');
+        for (const [prov, uu] of provs) {
+          const cost = estimateCost(prov, uu);
           totalUsd += cost;
           lines.push(
             '  ' + prov.padEnd(8) +
-            '  in:' + formatTokensCompact(u.inputTokens).padStart(6) +
-            '  out:' + formatTokensCompact(u.outputTokens).padStart(6) +
-            '  total:' + formatTokensCompact(u.totalTokens).padStart(6) +
-            '  turns:' + String(u.turns).padStart(3) +
+            '  in:' + formatTokensCompact(uu.inputTokens).padStart(6) +
+            '  out:' + formatTokensCompact(uu.outputTokens).padStart(6) +
+            '  total:' + formatTokensCompact(uu.totalTokens).padStart(6) +
+            '  turns:' + String(uu.turns).padStart(3) +
             '   ' + formatCost(cost)
           );
         }
-        lines.push('  ─────────────────────────────────────────────');
+        lines.push('  ─────────────────────────────');
         lines.push('  Total: ' + formatCost(totalUsd));
       }
       setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: lines.join('\n') }]);
@@ -352,63 +398,32 @@ function App() {
     }
     if (trimmed === '/setup') {
       setWizardDone(false);
-      setHistory((h) => [
-        ...h,
-        { kind: 'user', text: trimmed },
-        { kind: 'info', text: '시작 위저드를 다시 띄웁니다...' },
-      ]);
+      setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: '시작 위저드를 다시 띄웁니다...' }]);
       setInput('');
       return;
     }
     if (trimmed.startsWith('/theme')) {
       const arg = trimmed.split(/\s+/)[1];
       if (!arg) {
-        setHistory((h) => [
-          ...h,
-          { kind: 'user', text: trimmed },
-          { kind: 'info', text: `사용법: /theme light | /theme dark | /theme auto` },
-        ]);
+        setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: `사용법: /theme light | dark | auto` }]);
       } else if (arg === 'light' || arg === 'dark' || arg === 'auto') {
-        setThemeMode(arg);
-        saveConfig({ theme: arg });
-        setHistory((h) => [
-          ...h,
-          { kind: 'user', text: trimmed },
-          { kind: 'info', text: `테마 변경: ${getThemeLabel(arg)}` },
-        ]);
+        setThemeMode(arg); saveConfig({ theme: arg });
+        setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: `테마 변경: ${getThemeLabel(arg)}` }]);
       } else {
-        setHistory((h) => [
-          ...h,
-          { kind: 'user', text: trimmed },
-          { kind: 'error', text: `알 수 없는 테마: ${arg}` },
-        ]);
+        setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'error', text: `알 수 없는 테마: ${arg}` }]);
       }
       setInput('');
       return;
     }
-    if (trimmed.startsWith('/backend')) {
+    if (trimmed.startsWith('/backend') || trimmed.startsWith('/model')) {
       const arg = trimmed.split(/\s+/)[1];
       if (!arg) {
-        setHistory((h) => [
-          ...h,
-          { kind: 'user', text: trimmed },
-          { kind: 'info', text: `현재: ${getProvider()}\n사용법: /backend gemini | /backend groq | /backend ollama` },
-        ]);
-      } else if (arg === 'gemini' || arg === 'groq' || arg === 'ollama') {
-        setProvider(arg);
-        setProviderState(arg);
-        saveConfig({ backend: arg });
-        setHistory((h) => [
-          ...h,
-          { kind: 'user', text: trimmed },
-          { kind: 'info', text: `백엔드 변경: ${arg}` },
-        ]);
+        setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: `현재: ${getProvider()}\n사용법: gemini | groq | ollama` }]);
+      } else if (arg === 'gemini' || arg === 'groq' || arg === 'ollama' || arg === 'manual') {
+        setProvider(arg); setProviderState(arg); saveConfig({ backend: arg as any });
+        setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: `모델 전환: ${arg}` }]);
       } else {
-        setHistory((h) => [
-          ...h,
-          { kind: 'user', text: trimmed },
-          { kind: 'error', text: `알 수 없는 백엔드: ${arg}` },
-        ]);
+        setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'error', text: `알 수 없는 모델: ${arg}` }]);
       }
       setInput('');
       return;
@@ -416,91 +431,36 @@ function App() {
     if (trimmed.startsWith('/ollama-model')) {
       const arg = trimmed.split(/\s+/).slice(1).join(' ').trim();
       if (!arg) {
-        setHistory((h) => [
-          ...h,
-          { kind: 'user', text: trimmed },
-          { kind: 'info', text: `현재 Ollama 모델: ${getOllamaModel()}\n사용법: /ollama-model qwen2.5-coder:7b | /ollama-model llama3.1:8b | /ollama-model qwen2.5:7b` },
-        ]);
+        setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: `현재 Ollama 모델: ${getOllamaModel()}` }]);
       } else {
-        setOllamaModel(arg);
-        saveConfig({ ollamaModel: arg });
-        setHistory((h) => [
-          ...h,
-          { kind: 'user', text: trimmed },
-          { kind: 'info', text: `Ollama 모델 변경: ${arg}` },
-        ]);
-      }
-      setInput('');
-      return;
-    }
-    if (trimmed.startsWith('/model')) {
-      const arg = trimmed.split(/\s+/)[1];
-      if (!arg) {
-        setHistory((h) => [
-          ...h,
-          { kind: 'user', text: trimmed },
-          {
-            kind: 'info',
-            text: `현재: ${getProvider()}\n사용법: /model gemini | /model groq`,
-          },
-        ]);
-      } else if (arg === 'gemini' || arg === 'groq' || arg === 'ollama' || arg === 'manual') {
-        setProvider(arg);
-        setProviderState(arg);
-        setHistory((h) => [
-          ...h,
-          { kind: 'user', text: trimmed },
-          { kind: 'info', text: `모델 전환: ${arg}` },
-        ]);
-      } else {
-        setHistory((h) => [
-          ...h,
-          { kind: 'user', text: trimmed },
-          { kind: 'error', text: `알 수 없는 모델: ${arg}` },
-        ]);
+        setOllamaModel(arg); saveConfig({ ollamaModel: arg });
+        setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: `Ollama 모델 변경: ${arg}` }]);
       }
       setInput('');
       return;
     }
     if (trimmed === '/memory') {
       clearSystemCache();
-      setHistory((h) => [
-        ...h,
-        { kind: 'user', text: trimmed },
-        { kind: 'info', text: 'GEM.md 재로드 완료 (다음 메시지부터 반영)' },
-      ]);
+      setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: 'CLAUDE.md 재로드 완료' }]);
       setInput('');
       return;
     }
-        if (trimmed === '/sessions') {
+    if (trimmed === '/sessions') {
       const all = await listSessions();
       if (all.length === 0) {
-        setHistory((h) => [
-          ...h,
-          { kind: 'user', text: trimmed },
-          { kind: 'info', text: '저장된 세션이 없습니다.' },
-        ]);
+        setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: '저장된 세션이 없습니다.' }]);
       } else {
         const lines = all.slice(0, 20).map(summarizeSession).join('\n');
-        setHistory((h) => [
-          ...h,
-          { kind: 'user', text: trimmed },
-          { kind: 'info', text: `최근 세션 ${all.length}개:\n${lines}\n\n복원: /resume <id>` },
-        ]);
+        setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: `최근 세션 ${all.length}개:\n${lines}\n\n복원: /resume <id>` }]);
       }
       setInput('');
       return;
     }
-
     if (trimmed.startsWith('/resume')) {
       const arg = trimmed.split(/\s+/)[1];
       const target = arg ? await loadSession(arg) : await loadLatest();
       if (!target) {
-        setHistory((h) => [
-          ...h,
-          { kind: 'user', text: trimmed },
-          { kind: 'error', text: arg ? `세션을 찾을 수 없습니다: ${arg}` : '복원할 세션이 없습니다.' },
-        ]);
+        setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'error', text: arg ? `세션을 찾을 수 없습니다: ${arg}` : '복원할 세션이 없습니다.' }]);
         setInput('');
         return;
       }
@@ -518,34 +478,21 @@ function App() {
       return;
     }
     if (trimmed === '/init') {
-      setHistory((h) => [
-        ...h,
-        { kind: 'user', text: trimmed },
-        { kind: 'info', text: '프로젝트 분석 중... GEM.md 생성합니다.' },
-      ]);
+      setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: '프로젝트 분석 중... CLAUDE.md 생성합니다.' }]);
       setInput('');
       setBusy(true); setBusyStart(Date.now());
       try {
-              // 세션 자동 저장
         const result = await runInit();
         if (result.ok) {
           clearSystemCache();
-          setHistory((h) => [
-            ...h,
-            { kind: 'info', text: `✓ ${result.message}` },
-          ]);
+          setHistory((h) => [...h, { kind: 'info', text: `✓ ${result.message}` }]);
         } else {
           setHistory((h) => [...h, { kind: 'error', text: result.message }]);
         }
       } catch (err: any) {
-        setHistory((h) => [
-          ...h,
-          { kind: 'error', text: err?.message ?? String(err) },
-        ]);
+        setHistory((h) => [...h, { kind: 'error', text: err?.message ?? String(err) }]);
       } finally {
-        setBusy(false);
-        setUsageTick((t) => t + 1);
-        invalidateFileCache();
+        setBusy(false); setUsageTick((t) => t + 1); invalidateFileCache();
       }
       return;
     }
@@ -555,17 +502,11 @@ function App() {
 
     const expansion = await expandMentions(trimmed);
     const userContent = buildMessageWithAttachments(expansion);
-
-    const newMessages: Message[] = [
-      ...messages,
-      { role: 'user', content: userContent },
-    ];
+    const newMessages: Message[] = [...messages, { role: 'user', content: userContent }];
 
     let displayText = trimmed;
     if (expansion.attachments.length > 0) {
-      const files = expansion.attachments
-        .map((a) => (a.error ? `@${a.path} (에러)` : `@${a.path}`))
-        .join(', ');
+      const files = expansion.attachments.map((a) => (a.error ? `@${a.path} (에러)` : `@${a.path}`)).join(', ');
       displayText = `${trimmed}\n  ⎿ 첨부: ${files}`;
     }
     setHistory((h) => [...h, { kind: 'user', text: displayText }]);
@@ -573,16 +514,11 @@ function App() {
     try {
       const ac = new AbortController(); setAbortController(ac);
       const { text: reply, usedProvider } = await chat(newMessages, ac.signal);
-
       const provNow = usedProvider;
       setProviderState(provNow);
       setMessages([...newMessages, { role: 'assistant', content: reply }]);
-      // 타이핑 효과: 한 글자씩 점진적으로 표시
       let typeIdx = -1;
-      setHistory((h) => {
-        typeIdx = h.length;
-        return [...h, { kind: 'assistant', text: '', provider: provNow }];
-      });
+      setHistory((h) => { typeIdx = h.length; return [...h, { kind: 'assistant', text: '', provider: provNow }]; });
       await new Promise<void>((resolve) => {
         let i = 0;
         const SPEED = 6;
@@ -606,29 +542,37 @@ function App() {
       if (err?.name === 'AbortError' || String(err?.message ?? '').includes('aborted')) {
         setHistory((h) => [...h, { kind: 'info', text: '⎿  중단됨 (esc)' }]);
       } else {
-        setHistory((h) => [
-          ...h,
-          { kind: 'error', text: err?.message ?? String(err) },
-        ]);
+        setHistory((h) => [...h, { kind: 'error', text: err?.message ?? String(err) }]);
       }
     } finally {
-      setBusy(false);
-      setUsageTick((t) => t + 1);
-      invalidateFileCache();
+      setBusy(false); setAbortController(null); setUsageTick((t) => t + 1); invalidateFileCache();
     }
   };
 
   const u = getUsage();
   const ctxPct = contextPercent(u.totalTokens);
+  const colors = getColors();
 
+  if (!trusted) {
+    return (
+      <TrustDialog
+        onConfirm={() => {
+          const cfg = loadConfig();
+          saveConfig({ ...cfg, trusted: true });
+          setConfig(loadConfig());
+          setTrusted(true);
+        }}
+      />
+    );
+  }
   if (!wizardDone) {
     return (
       <StartupWizard
-        onDone={(theme, backend) => {
+        onDone={(theme) => {
           setThemeMode(theme);
-          setProvider(backend);
-          setProviderState(backend);
-          saveConfig({ theme, backend, configured: true });
+          saveConfig({ theme, backend: 'gemini', configured: true });
+          setProvider('gemini');
+          setProviderState('gemini');
           setConfig(loadConfig());
           setWizardDone(true);
         }}
@@ -649,9 +593,7 @@ function App() {
                 <Text>{lines[0]}</Text>
               </Box>
               {lines.slice(1).map((line, j) => (
-                <Box key={j}>
-                  <Text dimColor>{line}</Text>
-                </Box>
+                <Box key={j}><Text dimColor>{line}</Text></Box>
               ))}
             </Box>
           );
@@ -660,7 +602,7 @@ function App() {
           return (
             <Box key={i} marginTop={1} flexDirection="column">
               <Box>
-                <Text color="magentaBright">{'⏺ '}</Text>
+                <Text color={colors.signature}>{'⏺ '}</Text>
                 <Text>{item.text}</Text>
               </Box>
             </Box>
@@ -703,58 +645,33 @@ function App() {
         return (
           <Box key={i} marginTop={1} flexDirection="column">
             {item.text.split('\n').map((line, j) => (
-              <Box key={j}>
-                <Text dimColor>{line}</Text>
-              </Box>
+              <Box key={j}><Text dimColor>{line}</Text></Box>
             ))}
           </Box>
         );
       })}
 
       {pending && (
-        <Box
-          marginTop={1}
-          flexDirection="column"
-          borderStyle="round"
-          borderColor="yellow"
-          paddingX={1}
-        >
-          <Box>
-            <Text color="yellow" bold>{'⚠ 승인 필요: '}</Text>
-            <Text bold>{pending.toolName}</Text>
-          </Box>
-          <Box>
-            <Text>{pending.summary}</Text>
-          </Box>
+        <Box marginTop={1} flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1}>
+          <Box><Text color="yellow" bold>{'⚠ 승인 필요: '}</Text><Text bold>{pending.toolName}</Text></Box>
+          <Box><Text>{pending.summary}</Text></Box>
           {pending.detail && (
             <Box marginTop={1} flexDirection="column">
-              {pending.detail.split('\n').map((l, k) => (
-                <Text key={k} dimColor>{l}</Text>
-              ))}
+              {pending.detail.split('\n').map((l, k) => (<Text key={k} dimColor>{l}</Text>))}
             </Box>
           )}
           <Box marginTop={1}>
-            <Text color="green">y</Text>
-            <Text dimColor>=승인  </Text>
-            <Text color="red">n</Text>
-            <Text dimColor>=거부  </Text>
-            <Text color="cyan">a</Text>
-            <Text dimColor>=세션 동안 자동 승인</Text>
+            <Text color="green">y</Text><Text dimColor>=승인  </Text>
+            <Text color="red">n</Text><Text dimColor>=거부  </Text>
+            <Text color="cyan">a</Text><Text dimColor>=세션 자동 승인</Text>
           </Box>
         </Box>
       )}
 
       {!pending && (
-        <Box
-          marginTop={1}
-          borderStyle="round"
-          borderColor={busy ? 'yellow' : 'gray'}
-          paddingX={1}
-        >
+        <Box marginTop={1} borderStyle="round" borderColor={busy ? colors.signature : 'gray'} paddingX={1}>
           {busy ? (
-            <Box>
-              <ClaudeSpinner startTime={busyStart} />
-            </Box>
+            <Box><ClaudeSpinner startTime={busyStart} /></Box>
           ) : (
             <MentionInput
               value={input}
@@ -762,22 +679,24 @@ function App() {
               onSubmit={handleSubmit}
               placeholder="무엇을 도와드릴까요?"
               commands={SLASH_COMMANDS}
-          history={inputHistory}
+              history={inputHistory}
             />
           )}
         </Box>
       )}
 
+      <Box paddingX={1}>
+        <Text dimColor>? for shortcuts</Text>
+      </Box>
+
       <Box marginTop={1} paddingX={1}>
         <Text color={modeColor(mode)}>⏵⏵ {modeLabel(mode)}</Text>
         <Text dimColor>{' · '}</Text>
-        <Text color="yellow">◆ {provider}</Text>
+        <Text color={colors.signature}>◆ {provider}</Text>
         <Text dimColor>{' · '}</Text>
         <Text dimColor>📁 {path.basename(process.cwd())}</Text>
         <Text dimColor>{' · '}</Text>
-        <Text dimColor>
-          ⚡ {formatTokens(u.totalTokens)} · {u.turns}t
-        </Text>
+        <Text dimColor>⚡ {formatTokens(u.totalTokens)} · {u.turns}t</Text>
       </Box>
     </Box>
   );

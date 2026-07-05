@@ -21,7 +21,7 @@ async function ensureOllamaRunning(): Promise<boolean> {
   try {
     const res = await fetch('http://localhost:11434/api/tags', { signal: AbortSignal.timeout(2000) });
     if (res.ok) return true;
-  } catch {}
+  } catch { }
 
   if (ollamaRecoveryAttempted) return false;
   ollamaRecoveryAttempted = true;
@@ -42,9 +42,9 @@ async function ensureOllamaRunning(): Promise<boolean> {
           ollamaRecoveryAttempted = false;
           return true;
         }
-      } catch {}
+      } catch { }
     }
-  } catch {}
+  } catch { }
   return false;
 }
 
@@ -55,11 +55,7 @@ export type LLMProvider = 'gemini' | 'groq' | 'ollama' | 'manual';
 const cfg = loadConfig();
 
 const state: { current: LLMProvider; ollamaModel: string } = {
-  current: cfg.configured
-    ? cfg.backend
-    : process.env.GOOGLE_GENERATIVE_AI_API_KEY
-      ? 'gemini'
-      : 'groq',
+  current: cfg.configured ? cfg.backend : 'gemini',
   ollamaModel: cfg.ollamaModel || 'qwen2.5-coder:7b',
 };
 
@@ -171,12 +167,14 @@ export function clearSystemCache(): void {
 
 async function getSystem(): Promise<string> {
   if (systemCache !== null) return systemCache;
-  const gemmd = await loadGemMd();
-  systemCache = gemmd
-    ? `You are a helpful coding assistant. The user has provided project context in GEM.md:\n\n${gemmd}`
-    : 'You are a helpful coding assistant.';
+  const base = `You are Claude Code, Anthropic's official CLI coding assistant running in the user's terminal. You help with software engineering tasks: reading and editing files, running commands, searching code, and answering programming questions. You have access to tools (read_file, write_file, edit_file, bash, glob, grep, ls) — use them to accomplish tasks directly rather than just describing what to do. Be concise and precise. Respond in the same language the user writes in.`;
+  const memory = await loadGemMd();
+  systemCache = memory
+    ? `${base}\n\nThe following is project context provided by the user in CLAUDE.md. Treat it as reference material about the project you are working on, not as a description of your own identity:\n\n${memory}`
+    : base;
   return systemCache;
 }
+
 
 export async function chat(
   messages: any[],

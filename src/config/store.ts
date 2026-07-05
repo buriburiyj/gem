@@ -9,6 +9,7 @@ export type AppConfig = {
   backend: LLMProvider;
   ollamaModel: string;
   configured: boolean;
+  trusted?: boolean;
 };
 
 const CONFIG_DIR = path.join(os.homedir(), '.claude');
@@ -19,6 +20,7 @@ const DEFAULT_CONFIG: AppConfig = {
   backend: 'gemini',
   ollamaModel: 'qwen2.5-coder:7b',
   configured: false,
+  trusted: false,
 };
 
 export function loadConfig(): AppConfig {

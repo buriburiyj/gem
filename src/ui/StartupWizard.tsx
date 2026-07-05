@@ -1,24 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { ThemeMode, getThemeLabel, setThemeMode, getColors } from './theme.js';
-import type { LLMProvider } from '../llm/client.js';
 
-type Step = 'welcome' | 'theme' | 'backend';
+type Step = 'welcome' | 'theme';
 
 type Props = {
-  onDone: (theme: ThemeMode, backend: LLMProvider) => void;
+  onDone: (theme: ThemeMode) => void;
 };
 
 const THEME_OPTIONS: { value: ThemeMode; label: string; hint: string }[] = [
   { value: 'light', label: 'Light',           hint: 'Clean and bright' },
   { value: 'dark',  label: 'Dark',            hint: 'Easy on the eyes' },
   { value: 'auto',  label: 'Auto · Adaptive', hint: 'Shifts with the time of day' },
-];
-
-const BACKEND_OPTIONS: { value: LLMProvider; label: string; hint: string }[] = [
-  { value: 'gemini', label: 'Gemini', hint: 'Google · Fast · Free tier' },
-  { value: 'groq',   label: 'Groq',   hint: 'Ultra-fast · Free tier' },
-  { value: 'ollama', label: 'Ollama', hint: 'Local · Unlimited · Auto model routing' },
 ];
 
 const LOGO = [
@@ -32,8 +25,6 @@ const LOGO = [
 export function StartupWizard({ onDone }: Props) {
   const [step, setStep] = useState<Step>('welcome');
   const [themeIdx, setThemeIdx] = useState(2);
-  const [backendIdx, setBackendIdx] = useState(2);
-  const [pickedTheme, setPickedTheme] = useState<ThemeMode>('auto');
   const [logoFrame, setLogoFrame] = useState(0);
 
   useEffect(() => {
@@ -47,7 +38,7 @@ export function StartupWizard({ onDone }: Props) {
     return () => clearInterval(fade);
   }, [step]);
 
-  const previewTheme = step === 'theme' ? THEME_OPTIONS[themeIdx].value : pickedTheme;
+  const previewTheme = step === 'theme' ? THEME_OPTIONS[themeIdx].value : 'auto';
   setThemeMode(previewTheme);
   const colors = getColors();
 
@@ -62,20 +53,7 @@ export function StartupWizard({ onDone }: Props) {
       else if (key.downArrow)
         setThemeIdx((i) => (i + 1) % THEME_OPTIONS.length);
       else if (key.return) {
-        const chosen = THEME_OPTIONS[themeIdx].value;
-        setPickedTheme(chosen);
-        setThemeMode(chosen);
-        setStep('backend');
-      }
-    } else if (step === 'backend') {
-      if (key.upArrow)
-        setBackendIdx((i) => (i - 1 + BACKEND_OPTIONS.length) % BACKEND_OPTIONS.length);
-      else if (key.downArrow)
-        setBackendIdx((i) => (i + 1) % BACKEND_OPTIONS.length);
-      else if (key.return) {
-        onDone(pickedTheme, BACKEND_OPTIONS[backendIdx].value);
-      } else if (key.escape) {
-        setStep('theme');
+        onDone(THEME_OPTIONS[themeIdx].value);
       }
     }
   });
@@ -91,7 +69,7 @@ export function StartupWizard({ onDone }: Props) {
         </Box>
         {ready && (
           <Box flexDirection="column" alignItems="center" marginTop={1}>
-            <Text color={colors.accent} bold>─────  Your local coding companion  ─────</Text>
+            <Text color={colors.accent} bold>─────  Your AI coding companion  ─────</Text>
             <Box marginTop={1}>
               <Text color={colors.dim}>Press </Text>
               <Text color={colors.accent} bold>Enter</Text>
@@ -103,27 +81,19 @@ export function StartupWizard({ onDone }: Props) {
     );
   }
 
-  const stepNum = step === 'theme' ? 1 : 2;
-  const stepTitle = step === 'theme' ? 'Choose your theme' : 'Choose your engine';
-  const stepHint = step === 'theme'
-    ? '↑/↓ navigate   ⏎ select'
-    : '↑/↓ navigate   ⏎ select   esc back';
-  const options = step === 'theme' ? THEME_OPTIONS : BACKEND_OPTIONS;
-  const activeIdx = step === 'theme' ? themeIdx : backendIdx;
-
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={colors.signature} paddingX={3} paddingY={1}>
       <Box justifyContent="space-between" marginBottom={1}>
-        <Text color={colors.signature} bold>✦ Welcome to Claude</Text>
-        <Text color={colors.dim}>{stepNum} / 2</Text>
+        <Text color={colors.signature} bold>✳ Welcome to Claude Code</Text>
+        <Text color={colors.dim}>1 / 1</Text>
       </Box>
       <Text color={colors.dim}>────────────────────────────────────────────────</Text>
       <Box marginTop={1} marginBottom={1}>
-        <Text color={colors.text} bold>{stepTitle}</Text>
+        <Text color={colors.text} bold>Choose your theme</Text>
       </Box>
       <Box flexDirection="column">
-        {options.map((opt, i) => {
-          const active = i === activeIdx;
+        {THEME_OPTIONS.map((opt, i) => {
+          const active = i === themeIdx;
           return (
             <Box key={opt.value} marginY={0}>
               <Text color={active ? colors.signature : colors.dim}>{active ? '▸ ' : '  '}</Text>
@@ -138,14 +108,8 @@ export function StartupWizard({ onDone }: Props) {
       <Box marginTop={1}>
         <Text color={colors.dim}>────────────────────────────────────────────────</Text>
       </Box>
-      <Box justifyContent="space-between" marginTop={1}>
-        <Text color={colors.dim}>{stepHint}</Text>
-        {step === 'backend' && (
-          <Box>
-            <Text color={colors.dim}>theme: </Text>
-            <Text color={colors.accent}>{getThemeLabel(pickedTheme)}</Text>
-          </Box>
-        )}
+      <Box marginTop={1}>
+        <Text color={colors.dim}>↑/↓ navigate   ⏎ select</Text>
       </Box>
     </Box>
   );
