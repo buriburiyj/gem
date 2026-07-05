@@ -312,6 +312,59 @@ function HistorySearch({
   );
 }
 
+function RewindView({
+  messages,
+  onRewind,
+  onCancel,
+}: {
+  messages: Message[];
+  onRewind: (userMsgIndex: number) => void;
+  onCancel: () => void;
+}) {
+  const colors = getColors();
+  const userTurns = messages
+    .map((m, i) => ({ m, i }))
+    .filter((x) => x.m.role === 'user');
+  const [sel, setSel] = useState(Math.max(0, userTurns.length - 1));
+
+  useInput((_inputChar, key) => {
+    if (key.escape) { onCancel(); return; }
+    if (key.upArrow) { setSel((x) => Math.max(0, x - 1)); return; }
+    if (key.downArrow) { setSel((x) => Math.min(userTurns.length - 1, x + 1)); return; }
+    if (key.return) {
+      if (userTurns.length > 0) onRewind(userTurns[sel].i);
+      else onCancel();
+    }
+  });
+
+  return (
+    <Box flexDirection="column" marginY={1}>
+      <Box borderStyle="round" borderColor={colors.signature} paddingX={1}>
+        <Text bold>{'⏪ '}Rewind · 되돌릴 지점 선택</Text>
+      </Box>
+      <Box flexDirection="column" marginTop={1} paddingX={1}>
+        {userTurns.length === 0 ? (
+          <Text dimColor>되돌릴 대화가 없습니다.</Text>
+        ) : (
+          userTurns.map((x, i) => {
+            const text = String(x.m.content ?? '').replace(/\n/g, ' ').slice(0, 60);
+            return (
+              <Text key={i} color={i === sel ? colors.signature : undefined}>
+                {i === sel ? '❯ ' : '  '}
+                {String(i + 1).padStart(2)}. {text}
+              </Text>
+            );
+          })
+        )}
+      </Box>
+      <Box marginTop={1} paddingX={1} flexDirection="column">
+        <Text dimColor>선택한 지점 이후의 대화가 삭제됩니다 (파일은 복구되지 않음)</Text>
+        <Text dimColor>↑↓ select · Enter rewind · Esc cancel</Text>
+      </Box>
+    </Box>
+  );
+}
+
 function App() {
   const { exit } = useApp();
   const [input, setInput] = useState('');
@@ -324,6 +377,8 @@ function App() {
   const [modeChanged, setModeChanged] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
+  const [showRewind, setShowRewind] = useState(false);
+  const lastEscRef = React.useRef<number>(0);
   const [pending, setPending] = useState<ApprovalRequest | null>(null);
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const [sessionId] = useState<string>(() => newSessionId());
@@ -398,6 +453,21 @@ function App() {
     { isActive: busy && abortController !== null },
   );
 
+  useInput(
+    (_inputChar, key) => {
+      if (key.escape) {
+        const now = Date.now();
+        if (now - lastEscRef.current < 500) {
+          lastEscRef.current = 0;
+          setShowRewind(true);
+        } else {
+          lastEscRef.current = now;
+        }
+      }
+    },
+    { isActive: !busy && !pending && !showTranscript && !showSearch && !showRewind },
+  );
+
   useEffect(() => {
     const onTool = (ev: ToolEvent) => {
       if (ev.kind === 'tool_call') {
@@ -427,6 +497,18 @@ function App() {
       approvalBus.off('request', onApprovalRequest);
     };
   }, []);
+
+  const doRewind = (userMsgIndex: number) => {
+    const trimmedMsgs = messages.slice(0, userMsgIndex);
+    setMessages(trimmedMsgs);
+    const rebuilt: DisplayItem[] = [];
+    for (const m of trimmedMsgs) {
+      if (m.role === 'user') rebuilt.push({ kind: 'user', text: String(m.content ?? '') });
+      else if (m.role === 'assistant') rebuilt.push({ kind: 'assistant', text: String(m.content ?? ''), provider: getProvider() });
+    }
+    setHistory(rebuilt);
+    setShowRewind(false);
+  };
 
   const handleSubmit = async (value: string) => {
     const trimmed = value.trim();
@@ -699,6 +781,15 @@ function App() {
   const ctxPct = contextPercent(u.totalTokens);
   const colors = getColors();
 
+  if (showRewind) {
+    return (
+      <RewindView
+        messages={messages}
+        onRewind={doRewind}
+        onCancel={() => setShowRewind(false)}
+      />
+    );
+  }
   if (showSearch) {
     return (
       <HistorySearch
