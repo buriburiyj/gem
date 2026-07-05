@@ -256,6 +256,62 @@ function TranscriptView({
   );
 }
 
+function HistorySearch({
+  history,
+  onSelect,
+  onCancel,
+}: {
+  history: string[];
+  onSelect: (v: string) => void;
+  onCancel: () => void;
+}) {
+  const colors = getColors();
+  const [query, setQuery] = useState('');
+  const [sel, setSel] = useState(0);
+  const matches = query
+    ? history.filter((h) => h.toLowerCase().includes(query.toLowerCase())).reverse()
+    : [...history].reverse();
+  const shown = matches.slice(0, 8);
+
+  useInput((inputChar, key) => {
+    if (key.escape) { onCancel(); return; }
+    if (key.return) {
+      if (shown.length > 0) onSelect(shown[Math.min(sel, shown.length - 1)]);
+      else onCancel();
+      return;
+    }
+    if (key.upArrow) { setSel((x) => Math.max(0, x - 1)); return; }
+    if (key.downArrow) { setSel((x) => Math.min(shown.length - 1, x + 1)); return; }
+    if (key.backspace || key.delete) { setQuery((q) => q.slice(0, -1)); setSel(0); return; }
+    if (inputChar && !key.ctrl && !key.meta) { setQuery((q) => q + inputChar); setSel(0); }
+  });
+
+  return (
+    <Box flexDirection="column" marginY={1}>
+      <Box borderStyle="round" borderColor={colors.signature} paddingX={1}>
+        <Text bold>{'⌕ '}history search: </Text>
+        <Text>{query}</Text>
+        <Text color={colors.signature}>{'█'}</Text>
+      </Box>
+      <Box flexDirection="column" marginTop={1} paddingX={1}>
+        {shown.length === 0 ? (
+          <Text dimColor>일치하는 입력이 없습니다.</Text>
+        ) : (
+          shown.map((h, i) => (
+            <Text key={i} color={i === sel ? colors.signature : undefined}>
+              {i === sel ? '❯ ' : '  '}
+              {h.replace(/\n/g, ' ').slice(0, 70)}
+            </Text>
+          ))
+        )}
+      </Box>
+      <Box marginTop={1} paddingX={1}>
+        <Text dimColor>↑↓ select · Enter confirm · Esc cancel</Text>
+      </Box>
+    </Box>
+  );
+}
+
 function App() {
   const { exit } = useApp();
   const [input, setInput] = useState('');
@@ -267,6 +323,7 @@ function App() {
   const [mode, setModeState] = useState<PermissionMode>(getMode());
   const [modeChanged, setModeChanged] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
   const [pending, setPending] = useState<ApprovalRequest | null>(null);
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const [sessionId] = useState<string>(() => newSessionId());
@@ -316,6 +373,10 @@ function App() {
       }
       if (key.ctrl && inputChar === 'o') {
         setShowTranscript(true);
+        return;
+      }
+      if (key.ctrl && inputChar === 'r') {
+        setShowSearch(true);
         return;
       }
       if (key.shift && key.tab) {
@@ -638,6 +699,18 @@ function App() {
   const ctxPct = contextPercent(u.totalTokens);
   const colors = getColors();
 
+  if (showSearch) {
+    return (
+      <HistorySearch
+        history={inputHistory}
+        onSelect={(v) => {
+          setInput(v);
+          setShowSearch(false);
+        }}
+        onCancel={() => setShowSearch(false)}
+      />
+    );
+  }
   if (showTranscript) {
     return <TranscriptView history={history} onClose={() => setShowTranscript(false)} />;
   }
