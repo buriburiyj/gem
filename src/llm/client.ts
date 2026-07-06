@@ -184,8 +184,19 @@ function fallback(): boolean {
     state.current = 'manual';
     return true;
   }
-  if (state.current === 'gemini' && process.env.GROQ_API_KEY) {
-    state.current = 'groq';
+  if (state.current === 'gemini') {
+    // 먼저 같은 Gemini 안에서 flash로 강등 재시도 (Groq 8k 한도 회피)
+    const cur = state.geminiModel === 'auto' ? 'gemini-2.5-pro' : state.geminiModel;
+    if (cur !== 'gemini-2.5-flash') {
+      state.geminiModel = 'gemini-2.5-flash';
+      return true;
+    }
+    // 이미 flash인데도 실패하면 groq로
+    if (process.env.GROQ_API_KEY) {
+      state.current = 'groq';
+      return true;
+    }
+    state.current = 'manual';
     return true;
   }
   if (state.current === 'groq') {
