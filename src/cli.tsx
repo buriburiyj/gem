@@ -46,6 +46,7 @@ import { StartupWizard } from './ui/StartupWizard.js';
 import { loadConfig, saveConfig } from './config/store.js';
 import { setThemeMode, getColors, getThemeLabel, ThemeMode } from './ui/theme.js';
 import { setOllamaModel, getOllamaModel } from './llm/client.js';
+import { setGeminiModel, getGeminiModel, getGeminiRoute } from './llm/client.js';
 
 const SLASH_COMMANDS = [
   { name: 'help', description: '도움말 표시' },
@@ -647,6 +648,11 @@ function App() {
       const arg = trimmed.split(/\s+/)[1];
       if (!arg) {
         setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: `현재: ${getProvider()}\n사용법: gemini | groq | ollama` }]);
+      } else if (arg === 'auto' || arg === 'flash' || arg === 'pro') {
+        const gm = arg === 'auto' ? 'auto' : arg === 'flash' ? 'gemini-2.5-flash' : 'gemini-2.5-pro';
+        setGeminiModel(gm);
+        if (getProvider() !== 'gemini') { setProvider('gemini'); setProviderState('gemini'); saveConfig({ backend: 'gemini' }); }
+        setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: arg === 'auto' ? 'Gemini 모델: auto (복잡도에 따라 flash/pro 자동 선택)' : `Gemini 모델: ${gm}` }]);
       } else if (arg === 'gemini' || arg === 'groq' || arg === 'ollama' || arg === 'manual') {
         setProvider(arg); setProviderState(arg); saveConfig({ backend: arg as any });
         setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: `모델 전환: ${arg}` }]);
@@ -780,6 +786,13 @@ function App() {
   const u = getUsage();
   const ctxPct = contextPercent(u.totalTokens);
   const colors = getColors();
+  const gm = getGeminiModel();
+  const geminiSuffix =
+    provider === 'gemini'
+      ? gm === 'auto'
+        ? (getGeminiRoute() ? ` · auto→${getGeminiRoute()}` : ' · auto')
+        : ` · ${gm.replace('gemini-2.5-', '')}`
+      : '';
 
   if (showRewind) {
     return (
@@ -944,7 +957,7 @@ function App() {
       <Box marginTop={1} paddingX={1}>
         <Text color={modeColor(mode)} bold={modeChanged}>⏵⏵ {modeLabel(mode)}{modeChanged ? '  ◄ shift+tab' : ''}</Text>
         <Text dimColor>{' · '}</Text>
-        <Text color={colors.signature}>◆ {provider}</Text>
+        <Text color={colors.signature}>◆ {provider}{geminiSuffix}</Text>
         <Text dimColor>{' · '}</Text>
         <Text dimColor>📁 {path.basename(process.cwd())}</Text>
         <Text dimColor>{' · '}</Text>

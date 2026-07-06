@@ -54,8 +54,9 @@ export type LLMProvider = 'gemini' | 'groq' | 'ollama' | 'manual';
 
 const cfg = loadConfig();
 
-const state: { current: LLMProvider; ollamaModel: string } = {
+const state: { current: LLMProvider; ollamaModel: string; geminiModel: string } = {
   current: cfg.configured ? cfg.backend : 'gemini',
+  geminiModel: 'auto' as string,
   ollamaModel: cfg.ollamaModel || 'qwen2.5-coder:7b',
 };
 
@@ -112,8 +113,47 @@ export function getOllamaModel(): string {
   return state.ollamaModel;
 }
 
+let lastGeminiRoute = '';
+
+export function getGeminiRoute(): string {
+  return lastGeminiRoute;
+}
+
+export function getGeminiModel(): string {
+  return state.geminiModel;
+}
+
+export function setGeminiModel(m: string) {
+  state.geminiModel = m;
+}
+
+const CLASSIFIER_PROMPT = `You are a task routing AI. Analyze the user's request and classify its complexity.
+A task is COMPLEX if it meets ONE OR MORE: (1) needs 4+ steps/tool calls, (2) asks for architecture/strategy/design ("how"/"why"), (3) is broad/ambiguous needing extensive investigation, (4) deep debugging or root-cause analysis.
+A task is SIMPLE if it is specific, bounded, low operational complexity (1-3 tool calls). Operational simplicity overrides strategic phrasing.
+Respond ONLY with valid JSON: {"model_choice":"simple"} or {"model_choice":"complex"}. No other text.`;
+
+async function classifyComplexity(messages: any[], signal?: AbortSignal): Promise<'simple' | 'complex'> {
+  try {
+    const recent = messages.slice(-4);
+    const result = await generateText({
+      model: google('gemini-2.5-flash-lite'),
+      system: CLASSIFIER_PROMPT,
+      messages: recent,
+      maxRetries: 0,
+      abortSignal: signal,
+    });
+    const txt = result.text.toLowerCase();
+    return txt.includes('complex') ? 'complex' : 'simple';
+  } catch {
+    return 'simple';
+  }
+}
+
 function getModel() {
-  if (state.current === 'gemini') return google('gemini-2.5-flash');
+  if (state.current === 'gemini') {
+    const m = state.geminiModel === 'auto' ? 'gemini-2.5-flash' : state.geminiModel;
+    return google(m);
+  }
   if (state.current === 'groq') return groq('openai/gpt-oss-120b');
   if (state.current === 'ollama') return ollama(state.ollamaModel);
   throw new Error('Manual mode: LLM not available');
@@ -198,8 +238,21 @@ export async function chat(
           state.ollamaModel = autoModel;
         }
       }
+      // Gemini auto 라우팅: 복잡도 분류 후 flash/pro 선택
+      let routedGemini: string | null = null;
+      if (state.current === 'gemini' && state.geminiModel === 'auto') {
+        const complexity = await classifyComplexity(messages, signal);
+        routedGemini = complexity === 'complex' ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
+        lastGeminiRoute = routedGemini.replace('gemini-2.5-', '');
+      } else if (state.current === 'gemini') {
+        lastGeminiRoute = state.geminiModel.replace('gemini-2.5-', '');
+      }
+      const activeModel =
+        state.current === 'gemini'
+          ? google(routedGemini ?? (state.geminiModel === 'auto' ? 'gemini-2.5-flash' : state.geminiModel))
+          : getModel();
       const result = await generateText({
-        model: getModel(),
+        model: activeModel,
         system,
         messages,
         tools,
