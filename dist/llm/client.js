@@ -1,0 +1,267 @@
+import dotenv from 'dotenv';
+import path from 'node:path';
+import os from 'node:os';
+dotenv.config();
+dotenv.config({ path: path.join(os.homedir(), '.claude', '.env') });
+import { google } from '@ai-sdk/google';
+import { groq } from '@ai-sdk/groq';
+import { createOllama } from 'ollama-ai-provider-v2';
+import { generateText, stepCountIs } from 'ai';
+import { tools } from '../tools/index.js';
+import { loadGemMd } from '../context/gemmd.js';
+import { addUsage } from './usage.js';
+import { loadConfig } from '../config/store.js';
+import { spawn } from 'node:child_process';
+let ollamaRecoveryAttempted = false;
+async function ensureOllamaRunning() {
+    try {
+        const res = await fetch('http://localhost:11434/api/tags', { signal: AbortSignal.timeout(2000) });
+        if (res.ok)
+            return true;
+    }
+    catch { }
+    if (ollamaRecoveryAttempted)
+        return false;
+    ollamaRecoveryAttempted = true;
+    try {
+        const proc = spawn('ollama', ['serve'], {
+            detached: true,
+            stdio: 'ignore',
+            env: { ...process.env, PATH: '/usr/local/bin:/opt/homebrew/bin:' + (process.env.PATH || '') },
+        });
+        proc.unref();
+        for (let i = 0; i < 16; i++) {
+            await new Promise((r) => setTimeout(r, 500));
+            try {
+                const res = await fetch('http://localhost:11434/api/tags', { signal: AbortSignal.timeout(1000) });
+                if (res.ok) {
+                    ollamaRecoveryAttempted = false;
+                    return true;
+                }
+            }
+            catch { }
+        }
+    }
+    catch { }
+    return false;
+}
+const cfg = loadConfig();
+const state = {
+    current: cfg.configured ? cfg.backend : 'gemini',
+    geminiModel: 'auto',
+    ollamaModel: cfg.ollamaModel || 'qwen2.5-coder:7b',
+};
+const ollama = createOllama({
+    baseURL: process.env.OLLAMA_URL || 'http://localhost:11434/api',
+});
+export function getProvider() {
+    return state.current;
+}
+export function setProvider(p) {
+    state.current = p;
+}
+// 자동 모델 라우팅: 메시지 내용 보고 적절한 Ollama 모델 선택
+const TOOL_MODEL = 'llama3.1:8b'; // 파일/도구 작업
+const CHAT_MODEL = 'qwen2.5-coder:7b'; // 일반 대화/코딩 질문
+const TOOL_KEYWORDS = [
+    '만들어', '만들자', '생성', '저장', '수정', '삭제', '추가', '바꿔', '고쳐',
+    '파일', '폴더', '디렉토리', '실행',
+    'create', 'write', 'edit', 'delete', 'remove', 'modify', 'change',
+    'file', 'folder', 'directory', 'make', 'build', 'run', 'execute',
+    'mkdir', 'touch',
+];
+function shouldUseToolModel(text) {
+    const lower = text.toLowerCase();
+    // 경로 패턴 (~/, ./, /Users/ 등)
+    if (/(~\/|\.\/|\/Users\/|\/tmp\/|\/Desktop\/)/.test(text))
+        return true;
+    // 키워드 매칭
+    for (const kw of TOOL_KEYWORDS) {
+        if (lower.includes(kw.toLowerCase()))
+            return true;
+    }
+    return false;
+}
+function autoSelectOllamaModel(messages) {
+    const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+    if (!lastUser)
+        return CHAT_MODEL;
+    const text = typeof lastUser.content === 'string'
+        ? lastUser.content
+        : JSON.stringify(lastUser.content);
+    return shouldUseToolModel(text) ? TOOL_MODEL : CHAT_MODEL;
+}
+export function setOllamaModel(model) {
+    state.ollamaModel = model;
+}
+export function getOllamaModel() {
+    return state.ollamaModel;
+}
+let lastGeminiRoute = '';
+export function getGeminiRoute() {
+    return lastGeminiRoute;
+}
+export function getGeminiModel() {
+    return state.geminiModel;
+}
+export function setGeminiModel(m) {
+    state.geminiModel = m;
+}
+const CLASSIFIER_PROMPT = `You are a task routing AI. Analyze the user's request and classify its complexity.
+A task is COMPLEX if it meets ONE OR MORE: (1) needs 4+ steps/tool calls, (2) asks for architecture/strategy/design ("how"/"why"), (3) is broad/ambiguous needing extensive investigation, (4) deep debugging or root-cause analysis.
+A task is SIMPLE if it is specific, bounded, low operational complexity (1-3 tool calls). Operational simplicity overrides strategic phrasing.
+Respond ONLY with valid JSON: {"model_choice":"simple"} or {"model_choice":"complex"}. No other text.`;
+async function classifyComplexity(messages, signal) {
+    try {
+        const recent = messages.slice(-4);
+        const result = await generateText({
+            model: google('gemini-2.5-flash-lite'),
+            system: CLASSIFIER_PROMPT,
+            messages: recent,
+            maxRetries: 0,
+            abortSignal: signal,
+        });
+        const txt = result.text.toLowerCase();
+        return txt.includes('complex') ? 'complex' : 'simple';
+    }
+    catch {
+        return 'simple';
+    }
+}
+function getModel() {
+    if (state.current === 'gemini') {
+        const m = state.geminiModel === 'auto' ? 'gemini-2.5-flash' : state.geminiModel;
+        return google(m);
+    }
+    if (state.current === 'groq')
+        return groq('openai/gpt-oss-120b');
+    if (state.current === 'ollama')
+        return ollama(state.ollamaModel);
+    throw new Error('Manual mode: LLM not available');
+}
+function shouldFallback(err) {
+    const status = err?.statusCode ?? err?.lastError?.statusCode;
+    const msg = String(err?.message ?? err);
+    return (status === 429 ||
+        status === 503 ||
+        status === 500 ||
+        msg.includes('RESOURCE_EXHAUSTED') ||
+        msg.includes('UNAVAILABLE') ||
+        msg.includes('quota') ||
+        msg.includes('429') ||
+        msg.includes('503') ||
+        msg.includes('overloaded') ||
+        msg.includes('tool call validation failed') ||
+        msg.includes('not in request.tools') ||
+        msg.includes('Failed to call a function'));
+}
+function fallback() {
+    // Ollama는 폴백 체인에서 제외 — 사용자가 명시적으로 선택했을 때만 사용
+    if (state.current === 'ollama') {
+        state.current = 'manual';
+        return true;
+    }
+    if (state.current === 'gemini') {
+        // 먼저 같은 Gemini 안에서 flash로 강등 재시도 (Groq 8k 한도 회피)
+        const cur = state.geminiModel === 'auto' ? 'gemini-2.5-pro' : state.geminiModel;
+        if (cur !== 'gemini-2.5-flash') {
+            state.geminiModel = 'gemini-2.5-flash';
+            return true;
+        }
+        // 이미 flash인데도 실패하면 groq로
+        if (process.env.GROQ_API_KEY) {
+            state.current = 'groq';
+            return true;
+        }
+        state.current = 'manual';
+        return true;
+    }
+    if (state.current === 'groq') {
+        if (process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+            state.current = 'gemini';
+            return true;
+        }
+        state.current = 'manual';
+        return true;
+    }
+    return false;
+}
+let systemCache = null;
+export function clearSystemCache() {
+    systemCache = null;
+}
+async function getSystem() {
+    if (systemCache !== null)
+        return systemCache;
+    const base = `You are Claude Code, Anthropic's official CLI coding assistant running in the user's terminal. You help with software engineering tasks: reading and editing files, running commands, searching code, and answering programming questions. You have access to tools (read_file, write_file, edit_file, bash, glob, grep, ls, web_search) — use them to accomplish tasks directly rather than just describing what to do. When the user needs up-to-date information, news, current events, documentation, YouTube, or anything that may be beyond your training data, use the web_search tool to look it up instead of saying you cannot access the web. Be concise and precise. Respond in the same language the user writes in.`;
+    const memory = await loadGemMd();
+    systemCache = memory
+        ? `${base}\n\nThe following is project context provided by the user in CLAUDE.md. Treat it as reference material about the project you are working on, not as a description of your own identity:\n\n${memory}`
+        : base;
+    return systemCache;
+}
+export async function chat(messages, signal) {
+    const system = await getSystem();
+    // 최대 2번 폴백 시도
+    for (let attempt = 0; attempt < 3; attempt++) {
+        if (state.current === 'manual') {
+            throw new Error('All providers exhausted');
+        }
+        try {
+            // Ollama 자동 모델 라우팅 + 데몬 자동 복구
+            if (state.current === 'ollama') {
+                const alive = await ensureOllamaRunning();
+                if (!alive) {
+                    throw new Error('Ollama 데몬을 시작할 수 없습니다. 터미널에서 `ollama serve`를 실행해주세요.');
+                }
+                const autoModel = autoSelectOllamaModel(messages);
+                if (autoModel !== state.ollamaModel) {
+                    state.ollamaModel = autoModel;
+                }
+            }
+            // Gemini auto 라우팅: 복잡도 분류 후 flash/pro 선택
+            let routedGemini = null;
+            if (state.current === 'gemini' && state.geminiModel === 'auto') {
+                const complexity = await classifyComplexity(messages, signal);
+                routedGemini = complexity === 'complex' ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
+                lastGeminiRoute = routedGemini.replace('gemini-2.5-', '');
+            }
+            else if (state.current === 'gemini') {
+                lastGeminiRoute = state.geminiModel.replace('gemini-2.5-', '');
+            }
+            const activeModel = state.current === 'gemini'
+                ? google(routedGemini ?? (state.geminiModel === 'auto' ? 'gemini-2.5-flash' : state.geminiModel))
+                : getModel();
+            const result = await generateText({
+                model: activeModel,
+                system,
+                messages,
+                tools,
+                stopWhen: stepCountIs(10),
+                maxRetries: 0,
+                abortSignal: signal,
+            });
+            const u = result.usage;
+            if (u) {
+                addUsage(state.current, {
+                    inputTokens: u.inputTokens ?? u.promptTokens,
+                    outputTokens: u.outputTokens ?? u.completionTokens,
+                    totalTokens: u.totalTokens,
+                });
+            }
+            return { text: result.text, usedProvider: state.current };
+        }
+        catch (err) {
+            if (err?.name === 'AbortError' || signal?.aborted)
+                throw err;
+            const before = state.current;
+            if (shouldFallback(err) && fallback()) {
+                console.error(`[fallback] ${before} → ${state.current} (${err?.statusCode ?? ''} ${String(err?.message ?? err).slice(0, 120)})`);
+                continue;
+            }
+            throw err;
+        }
+    }
+    throw new Error('All providers exhausted');
+}
+//# sourceMappingURL=client.js.map
