@@ -380,6 +380,8 @@ function App() {
   const [showSearch, setShowSearch] = useState(false);
   const [showRewind, setShowRewind] = useState(false);
   const lastEscRef = React.useRef<number>(0);
+  const lastCtrlCRef = React.useRef<number>(0);
+  const [ctrlCHint, setCtrlCHint] = useState(false);
   const [pending, setPending] = useState<ApprovalRequest | null>(null);
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const [sessionId] = useState<string>(() => newSessionId());
@@ -412,6 +414,22 @@ function App() {
     saveSession(session).catch(() => {});
   }, [messages]);
 
+  const saveAndExit = async () => {
+    if (messages.length > 0) {
+      const session: Session = {
+        id: sessionId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        cwd: process.cwd(),
+        messages: messages as SessionMessage[],
+        inputHistory,
+      };
+      try { await saveSession(session); } catch {}
+    }
+    exit();
+    process.exit(0);
+  };
+
   useInput(
     (inputChar, key) => {
       if (pending) {
@@ -424,6 +442,17 @@ function App() {
         } else if (inputChar === 'a') {
           answerApproval(pending.id, 'always');
           setPending(null);
+        }
+        return;
+      }
+      if (key.ctrl && inputChar === 'c') {
+        const now = Date.now();
+        if (now - lastCtrlCRef.current < 2000) {
+          void saveAndExit();
+        } else {
+          lastCtrlCRef.current = now;
+          setCtrlCHint(true);
+          setTimeout(() => setCtrlCHint(false), 2000);
         }
         return;
       }
@@ -547,7 +576,7 @@ function App() {
       return;
     }
 
-    if (trimmed === '/exit' || trimmed === '/quit') { exit(); return; }
+    if (trimmed === '/exit' || trimmed === '/quit') { void saveAndExit(); return; }
     if (trimmed === '/clear') {
       setHistory([]); setMessages([]); resetUsage();
       setUsageTick((t) => t + 1); setInput('');
@@ -951,7 +980,7 @@ function App() {
       )}
 
       <Box paddingX={1}>
-        <Text dimColor>? for shortcuts</Text>
+        <Text dimColor>{ctrlCHint ? '한 번 더 Ctrl+C를 누르면 종료됩니다' : '? for shortcuts'}</Text>
       </Box>
 
       <Box marginTop={1} paddingX={1}>
@@ -967,4 +996,4 @@ function App() {
   );
 }
 
-render(<App />);
+render(<App />, { exitOnCtrlC: false });
