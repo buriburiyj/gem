@@ -86,6 +86,7 @@ type DisplayItem =
   | { kind: 'diff'; id: string; filePath: string; oldText: string; newText: string };
 
 function summarizeInput(name: string, input: any): string {
+  if (name === 'web_search') return input?.query ?? '';
   if (name === 'read_file') return input?.path ?? '';
   if (name === 'write_file') return input?.path ?? '';
   if (name === 'edit_file') return input?.path ?? '';
@@ -107,6 +108,7 @@ function summarizeInput(name: string, input: any): string {
 function toolDisplayName(name: string): string {
   const map: Record<string, string> = {
     read_file: 'Read',
+    web_search: 'Web Search',
     write_file: 'Write',
     edit_file: 'Edit',
     bash: 'Bash',

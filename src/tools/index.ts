@@ -5,6 +5,7 @@ import { bashTool } from './bash.js';
 import { globTool } from './glob.js';
 import { grepTool } from './grep.js';
 import { lsTool } from './ls.js';
+import { webSearchTool } from './web_search.js';
 
 export const tools = {
   read_file: readFileTool,
@@ -14,4 +15,5 @@ export const tools = {
   glob: globTool,
   grep: grepTool,
   ls: lsTool,
+  web_search: webSearchTool,
 };

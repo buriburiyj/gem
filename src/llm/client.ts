@@ -218,7 +218,7 @@ export function clearSystemCache(): void {
 
 async function getSystem(): Promise<string> {
   if (systemCache !== null) return systemCache;
-  const base = `You are Claude Code, Anthropic's official CLI coding assistant running in the user's terminal. You help with software engineering tasks: reading and editing files, running commands, searching code, and answering programming questions. You have access to tools (read_file, write_file, edit_file, bash, glob, grep, ls) — use them to accomplish tasks directly rather than just describing what to do. Be concise and precise. Respond in the same language the user writes in.`;
+  const base = `You are Claude Code, Anthropic's official CLI coding assistant running in the user's terminal. You help with software engineering tasks: reading and editing files, running commands, searching code, and answering programming questions. You have access to tools (read_file, write_file, edit_file, bash, glob, grep, ls, web_search) — use them to accomplish tasks directly rather than just describing what to do. When the user needs up-to-date information, news, current events, documentation, YouTube, or anything that may be beyond your training data, use the web_search tool to look it up instead of saying you cannot access the web. Be concise and precise. Respond in the same language the user writes in.`;
   const memory = await loadGemMd();
   systemCache = memory
     ? `${base}\n\nThe following is project context provided by the user in CLAUDE.md. Treat it as reference material about the project you are working on, not as a description of your own identity:\n\n${memory}`
