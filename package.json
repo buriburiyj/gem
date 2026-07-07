@@ -12,7 +12,7 @@
     "start": "node dist/cli.js",
     "snake": "tsx src/snake/cli.tsx",
     "clean": "rm -rf dist",
-    "prepare": "tsc"
+    "prepare": "npx tsc"
   },
   "keywords": [
     "cli",
