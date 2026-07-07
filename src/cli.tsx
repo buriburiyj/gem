@@ -366,11 +366,18 @@ function RewindView({
   );
 }
 
-function App() {
+function App({ initialSession }: { initialSession?: Session | null }) {
   const { exit } = useApp();
   const [input, setInput] = useState('');
-  const [history, setHistory] = useState<DisplayItem[]>([]);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [history, setHistory] = useState<DisplayItem[]>(() => {
+    if (!initialSession) return [];
+    return (initialSession.messages || []).map((m: any) =>
+      m.role === 'user'
+        ? { kind: 'user', text: String(m.content ?? '') }
+        : { kind: 'assistant', text: String(m.content ?? ''), provider: getProvider() },
+    ) as DisplayItem[];
+  });
+  const [messages, setMessages] = useState<Message[]>(() => (initialSession?.messages as Message[]) ?? []);
   const [busy, setBusy] = useState(false);
   const [busyStart, setBusyStart] = useState<number>(0);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
@@ -996,4 +1003,38 @@ function App() {
   );
 }
 
-render(<App />, { exitOnCtrlC: false });
+async function main() {
+  const args = process.argv.slice(2);
+  const cmd = args[0];
+
+  // 세션 목록 보기: claude sessions | claude --list
+  if (cmd === 'sessions' || cmd === '--list') {
+    const all = await listSessions();
+    if (all.length === 0) {
+      console.log('저장된 세션이 없습니다.');
+    } else {
+      console.log('저장된 세션:');
+      for (const sess of all) {
+        console.log('  ' + sess.id + '  ' + summarizeSession(sess));
+      }
+      console.log('\n이어서 시작: claude resume <id>');
+    }
+    process.exit(0);
+  }
+
+  // 세션 이어서 시작: claude resume [id] | claude --continue
+  let initialSession = null;
+  if (cmd === 'resume' || cmd === '--continue' || cmd === '-c') {
+    const id = args[1];
+    initialSession = id ? await loadSession(id) : await loadLatest();
+    if (!initialSession) {
+      console.log(id ? `세션을 찾을 수 없습니다: ${id}` : '이어서 시작할 세션이 없습니다.');
+      process.exit(1);
+    }
+    console.log(`세션 복원: ${initialSession.id} (${initialSession.messages.length}개 메시지)`);
+  }
+
+  render(<App initialSession={initialSession} />, { exitOnCtrlC: false });
+}
+
+main();
