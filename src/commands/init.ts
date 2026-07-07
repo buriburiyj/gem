@@ -13,15 +13,15 @@ async function tryRead(p: string): Promise<string | null> {
 
 export async function runInit(): Promise<{ ok: boolean; message: string }> {
   const cwd = process.cwd();
-  const gemMdPath = path.join(cwd, 'GEM.md');
+  const claudeMdPath = path.join(cwd, 'CLAUDE.md');
 
   // 이미 존재 확인
   try {
-    await stat(gemMdPath);
+    await stat(claudeMdPath);
     return {
       ok: false,
       message:
-        'GEM.md가 이미 존재합니다. 덮어쓰려면 먼저 파일을 삭제하거나 /memory로 편집하세요.',
+        'CLAUDE.md가 이미 존재합니다. 덮어쓰려면 먼저 파일을 삭제하거나 /memory로 편집하세요.',
     };
   } catch {}
 
@@ -41,8 +41,8 @@ export async function runInit(): Promise<{ ok: boolean; message: string }> {
   });
   const topFiles = files.slice(0, 100);
 
-  const prompt = `다음 정보를 바탕으로 이 프로젝트용 GEM.md 파일 내용을 작성해줘.
-GEM.md는 코딩 에이전트(gem, Claude Code의 클론)가 매 세션 시작 시 자동으로 읽는 프로젝트 가이드 메모리야.
+  const prompt = `다음 정보를 바탕으로 이 프로젝트용 CLAUDE.md 파일 내용을 작성해줘.
+CLAUDE.md는 코딩 에이전트(Claude Code)가 매 세션 시작 시 자동으로 읽는 프로젝트 가이드 메모리야.
 포함할 내용:
 1. 프로젝트 개요 (한 두 줄)
 2. 주요 기술 스택
@@ -69,8 +69,8 @@ ${topFiles.join('\n')}
 
   try {
     const { text: reply } = await chat([{ role: 'user', content: prompt }]);
-    await writeFile(gemMdPath, reply.trim() + '\n', 'utf-8');
-    return { ok: true, message: `GEM.md 생성 완료 (${reply.length} bytes)` };
+    await writeFile(claudeMdPath, reply.trim() + '\n', 'utf-8');
+    return { ok: true, message: `CLAUDE.md 생성 완료 (${reply.length} bytes)` };
   } catch (err: any) {
     return { ok: false, message: `생성 실패: ${err.message}` };
   }

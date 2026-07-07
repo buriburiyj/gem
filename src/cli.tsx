@@ -922,16 +922,36 @@ function App({ initialSession }: { initialSession?: Session | null }) {
           return (
             <Box key={i} marginTop={1} flexDirection="column">
               <Box>
-                <Text color={item.ok === false ? 'red' : 'green'}>{'⏺ '}</Text>
+                <Text color={item.ok === false ? 'red' : colors.signature}>{'⏺ '}</Text>
                 <Text bold>{display}</Text>
                 <Text dimColor>({arg})</Text>
               </Box>
-              {item.result !== undefined && (
-                <Box>
-                  <Text color={item.ok === false ? 'red' : 'gray'}>{'  ⎿  '}</Text>
-                  <Text dimColor>{item.result}</Text>
-                </Box>
-              )}
+              {item.result !== undefined && (() => {
+                const lines = item.result.split('\n');
+                const MAX = 4;
+                const shown = lines.slice(0, MAX);
+                const extra = lines.length - MAX;
+                return (
+                  <Box flexDirection="column">
+                    {shown.map((ln, li) => (
+                      <Box key={li}>
+                        <Text color={item.ok === false ? 'red' : 'gray'}>
+                          {li === 0 ? '  ⎿  ' : '     '}
+                        </Text>
+                        <Text color={item.ok === false ? 'red' : undefined} dimColor={item.ok !== false}>
+                          {ln}
+                        </Text>
+                      </Box>
+                    ))}
+                    {extra > 0 && (
+                      <Box>
+                        <Text>{'     '}</Text>
+                        <Text dimColor>… +{extra} lines (ctrl+o to expand)</Text>
+                      </Box>
+                    )}
+                  </Box>
+                );
+              })()}
             </Box>
           );
         }
@@ -972,7 +992,7 @@ function App({ initialSession }: { initialSession?: Session | null }) {
       {!pending && (
         <Box marginTop={1} borderStyle="round" borderColor={busy ? colors.signature : 'gray'} paddingX={1}>
           {busy ? (
-            <Box><ClaudeSpinner startTime={busyStart} /></Box>
+            <Box><ClaudeSpinner startTime={busyStart} tokens={u.totalTokens} /></Box>
           ) : (
             <MentionInput
               value={input}

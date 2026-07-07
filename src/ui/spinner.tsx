@@ -20,7 +20,12 @@ const WORDS = [
   'Whisking', 'Working', 'Wrangling', 'Zesting',
 ];
 
-export function ClaudeSpinner({ startTime }: { startTime: number }) {
+function formatTok(n: number): string {
+  if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+  return String(n);
+}
+
+export function ClaudeSpinner({ startTime, tokens }: { startTime: number; tokens?: number }) {
   const [frame, setFrame] = useState(0);
   const [word] = useState(() => WORDS[Math.floor(Math.random() * WORDS.length)]);
   const [elapsed, setElapsed] = useState(0);
@@ -35,7 +40,7 @@ export function ClaudeSpinner({ startTime }: { startTime: number }) {
     <Text>
       <Text color="#D77757">{FRAMES[frame]}</Text>
       <Text color="#D77757">{' ' + word}…</Text>
-      <Text dimColor>{` (${elapsed}s · esc to interrupt)`}</Text>
+      <Text dimColor>{` (${elapsed}s${tokens ? ` · ↑ ${formatTok(tokens)} tokens` : ''} · esc to interrupt)`}</Text>
     </Text>
   );
 }
