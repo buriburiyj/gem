@@ -111,22 +111,31 @@ const CLASSIFIER_PROMPT = `You are a task routing AI. Analyze the user's request
 A task is COMPLEX if it meets ONE OR MORE: (1) needs 4+ steps/tool calls, (2) asks for architecture/strategy/design ("how"/"why"), (3) is broad/ambiguous needing extensive investigation, (4) deep debugging or root-cause analysis.
 A task is SIMPLE if it is specific, bounded, low operational complexity (1-3 tool calls). Operational simplicity overrides strategic phrasing.
 Respond ONLY with valid JSON: {"model_choice":"simple"} or {"model_choice":"complex"}. No other text.`;
-async function classifyComplexity(messages, signal) {
-    try {
-        const recent = messages.slice(-4);
-        const result = await generateText({
-            model: google('gemini-2.5-flash-lite'),
-            system: CLASSIFIER_PROMPT,
-            messages: recent,
-            maxRetries: 0,
-            abortSignal: signal,
-        });
-        const txt = result.text.toLowerCase();
-        return txt.includes('complex') ? 'complex' : 'simple';
+function classifyComplexity(messages, _signal) {
+    const rev = [...messages].reverse();
+    const lastUser = rev.find((m) => m.role === 'user');
+    let text = '';
+    if (lastUser) {
+        if (typeof lastUser.content === 'string')
+            text = lastUser.content;
+        else if (Array.isArray(lastUser.content))
+            text = lastUser.content.map((p) => (p && p.text) ? p.text : '').join(' ');
     }
-    catch {
-        return 'simple';
-    }
+    const t = text.toLowerCase();
+    const fence = String.fromCharCode(96, 96, 96);
+    if (text.includes(fence))
+        return 'complex';
+    if (text.length > 600)
+        return 'complex';
+    const complexKeywords = [
+        'refactor', 'architecture', 'design', 'debug', 'optimize', 'implement',
+        'algorithm', 'migrate', 'test', 'fix bug', 'trace', 'why does', 'explain how',
+        '리팩토', '설계', '아키텍', '디버그', '최적화', '구현', '알고리즘',
+        '마이그레이션', '테스트', '버그', '원인', '분석', '어떻게 동작', '여러 파일', '전체 코드', '리뷰',
+    ];
+    if (complexKeywords.some((k) => t.includes(k)))
+        return 'complex';
+    return 'simple';
 }
 function getModel() {
     if (state.current === 'gemini') {
@@ -222,7 +231,7 @@ export async function chat(messages, signal) {
             // Gemini auto 라우팅: 복잡도 분류 후 flash/pro 선택
             let routedGemini = null;
             if (state.current === 'gemini' && state.geminiModel === 'auto') {
-                const complexity = await classifyComplexity(messages, signal);
+                const complexity = classifyComplexity(messages, signal);
                 routedGemini = complexity === 'complex' ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
                 lastGeminiRoute = routedGemini.replace('gemini-2.5-', '');
             }
