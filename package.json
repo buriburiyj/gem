@@ -11,8 +11,7 @@
     "dev": "tsx src/cli.tsx",
     "start": "node dist/cli.js",
     "snake": "tsx src/snake/cli.tsx",
-    "clean": "rm -rf dist",
-    "prepare": "node ./node_modules/typescript/bin/tsc"
+    "clean": "rm -rf dist"
   },
   "keywords": [
     "cli",
