@@ -98,6 +98,7 @@ export function getOllamaModel() {
     return state.ollamaModel;
 }
 let lastGeminiRoute = '';
+let demotedByFallback = false; // 폴백으로 flash 강등됐는지 표시
 export function getGeminiRoute() {
     return lastGeminiRoute;
 }
@@ -112,6 +113,7 @@ A task is COMPLEX if it meets ONE OR MORE: (1) needs 4+ steps/tool calls, (2) as
 A task is SIMPLE if it is specific, bounded, low operational complexity (1-3 tool calls). Operational simplicity overrides strategic phrasing.
 Respond ONLY with valid JSON: {"model_choice":"simple"} or {"model_choice":"complex"}. No other text.`;
 function classifyComplexity(messages, _signal) {
+    // 품질 우선: 기본은 pro(complex), 아주 단순한 것만 flash(simple)
     const rev = [...messages].reverse();
     const lastUser = rev.find((m) => m.role === 'user');
     let text = '';
@@ -121,21 +123,13 @@ function classifyComplexity(messages, _signal) {
         else if (Array.isArray(lastUser.content))
             text = lastUser.content.map((p) => (p && p.text) ? p.text : '').join(' ');
     }
-    const t = text.toLowerCase();
-    const fence = String.fromCharCode(96, 96, 96);
-    if (text.includes(fence))
-        return 'complex';
-    if (text.length > 600)
-        return 'complex';
-    const complexKeywords = [
-        'refactor', 'architecture', 'design', 'debug', 'optimize', 'implement',
-        'algorithm', 'migrate', 'test', 'fix bug', 'trace', 'why does', 'explain how',
-        '리팩토', '설계', '아키텍', '디버그', '최적화', '구현', '알고리즘',
-        '마이그레이션', '테스트', '버그', '원인', '분석', '어떻게 동작', '여러 파일', '전체 코드', '리뷰',
-    ];
-    if (complexKeywords.some((k) => t.includes(k)))
-        return 'complex';
-    return 'simple';
+    const t = text.trim().toLowerCase();
+    // 짧은 인사/확인만 flash로
+    const simplePhrases = ['안녕', '하이', 'hi', 'hello', 'ok', '오케이', '응', '그래', '고마', 'thanks', 'thank you', '네', 'yes', 'no', '아니'];
+    if (t.length <= 30 && simplePhrases.some((p) => t.includes(p)))
+        return 'simple';
+    // 그 외 모든 것은 품질을 위해 pro
+    return 'complex';
 }
 function getModel() {
     if (state.current === 'gemini') {
@@ -174,6 +168,9 @@ function fallback() {
         // 먼저 같은 Gemini 안에서 flash로 강등 재시도 (Groq 8k 한도 회피)
         const cur = state.geminiModel === 'auto' ? 'gemini-2.5-pro' : state.geminiModel;
         if (cur !== 'gemini-2.5-flash') {
+            // auto였다가 강등되는 경우만 복원 대상으로 표시
+            if (state.geminiModel === 'auto')
+                demotedByFallback = true;
             state.geminiModel = 'gemini-2.5-flash';
             return true;
         }
@@ -202,7 +199,7 @@ export function clearSystemCache() {
 async function getSystem() {
     if (systemCache !== null)
         return systemCache;
-    const base = `You are Claude Code, Anthropic's official CLI coding assistant running in the user's terminal. You help with software engineering tasks: reading and editing files, running commands, searching code, and answering programming questions. You have access to tools (read_file, write_file, edit_file, bash, glob, grep, ls, web_search) — use them to accomplish tasks directly rather than just describing what to do. When the user needs up-to-date information, news, current events, documentation, YouTube, or anything that may be beyond your training data, use the web_search tool to look it up instead of saying you cannot access the web. Be concise and precise. Respond in the same language the user writes in.`;
+    const base = `You are Claude Code, Anthropic's official CLI coding assistant running in the user's terminal. You help with software engineering tasks: reading and editing files, running commands, searching code, and answering programming questions. You have access to tools (read_file, write_file, edit_file, bash, glob, grep, ls, web_search) — use them to accomplish tasks directly rather than just describing what to do. When the user needs up-to-date information, news, current events, documentation, YouTube, or anything that may be beyond your training data, use the web_search tool to look it up instead of saying you cannot access the web. Before answering questions about code, read the relevant files with read_file rather than guessing their contents. If you are unsure about a fact or need current information, use web_search to verify instead of guessing. When editing code, briefly explain the reason for each change. Prefer correctness and completeness over brevity, but avoid unnecessary filler. Respond in the same language the user writes in.`;
     const memory = await loadGemMd();
     systemCache = memory
         ? `${base}\n\nThe following is project context provided by the user in CLAUDE.md. Treat it as reference material about the project you are working on, not as a description of your own identity:\n\n${memory}`
@@ -211,6 +208,11 @@ async function getSystem() {
 }
 export async function chat(messages, signal) {
     const system = await getSystem();
+    // 직전 요청에서 폴백으로 강등됐다면 이번엔 다시 auto(기본 pro)로 복원
+    if (demotedByFallback) {
+        state.geminiModel = 'auto';
+        demotedByFallback = false;
+    }
     // 최대 2번 폴백 시도
     for (let attempt = 0; attempt < 3; attempt++) {
         if (state.current === 'manual') {

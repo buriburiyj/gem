@@ -114,7 +114,6 @@ export function getOllamaModel(): string {
 }
 
 let lastGeminiRoute = '';
-let demotedByFallback = false; // 폴백으로 flash 강등됐는지 표시
 
 export function getGeminiRoute(): string {
   return lastGeminiRoute;
@@ -189,8 +188,6 @@ function fallback(): boolean {
     // 먼저 같은 Gemini 안에서 flash로 강등 재시도 (Groq 8k 한도 회피)
     const cur = state.geminiModel === 'auto' ? 'gemini-2.5-pro' : state.geminiModel;
     if (cur !== 'gemini-2.5-flash') {
-      // auto였다가 강등되는 경우만 복원 대상으로 표시
-      if (state.geminiModel === 'auto') demotedByFallback = true;
       state.geminiModel = 'gemini-2.5-flash';
       return true;
     }
@@ -235,11 +232,6 @@ export async function chat(
   signal?: AbortSignal,
 ): Promise<{ text: string; usedProvider: LLMProvider }> {
   const system = await getSystem();
-  // 직전 요청에서 폴백으로 강등됐다면 이번엔 다시 auto(기본 pro)로 복원
-  if (demotedByFallback) {
-    state.geminiModel = 'auto';
-    demotedByFallback = false;
-  }
   // 최대 2번 폴백 시도
   for (let attempt = 0; attempt < 3; attempt++) {
     if (state.current === 'manual') {

@@ -27,7 +27,7 @@ export const webSearchTool = tool({
                     query,
                     max_results: n,
                     include_answer: true,
-                    search_depth: 'basic',
+                    search_depth: 'advanced',
                 }),
             });
             if (!res.ok) {
