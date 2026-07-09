@@ -1075,6 +1075,35 @@ async function main() {
   const args = process.argv.slice(2);
   const cmd = args[0];
 
+  // --version
+  if (cmd === '--version' || cmd === '-v') {
+    console.log('claude v0.0.1');
+    process.exit(0);
+  }
+
+  // --help
+  if (cmd === '--help' || cmd === '-h' || cmd === 'help') {
+    const lines = [
+      '',
+      '  \x1b[1mClaude Code\x1b[0m — AI 코딩 어시스턴트 \x1b[2m(v0.0.1)\x1b[0m',
+      '',
+      '  \x1b[1m사용법:\x1b[0m',
+      '    claude                 새 세션 시작',
+      '    claude resume [id]     세션 이어서 진행 (id 없으면 최근)',
+      '    claude sessions        저장된 세션 목록 (폴더별)',
+      '    claude delete <id>     세션 삭제',
+      '',
+      '  \x1b[1m옵션:\x1b[0m',
+      '    -h, --help             이 도움말 표시',
+      '    -v, --version          버전 표시',
+      '',
+      '  \x1b[2m앱 실행 중에는 /help 로 명령 목록을 볼 수 있습니다.\x1b[0m',
+      '',
+    ];
+    console.log(lines.join('\n'));
+    process.exit(0);
+  }
+
   // 세션 목록 보기: claude sessions | claude --list
   if (cmd === 'delete') {
     const id = args[1];
