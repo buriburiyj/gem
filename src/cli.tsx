@@ -53,6 +53,7 @@ import { setGeminiModel, getGeminiModel, getGeminiRoute } from './llm/client.js'
 const SLASH_COMMANDS = [
   { name: 'help', description: '도움말 표시' },
   { name: 'clear', description: '대화 초기화' },
+  { name: 'compact', description: '대화를 요약해 토큰 절약' },
   { name: 'model', description: '모델 전환 (gemini/groq/ollama)' },
   { name: 'setup', description: '시작 위저드 다시 띄우기' },
   { name: 'theme', description: '테마 변경 (light/dark/auto)' },
@@ -594,6 +595,27 @@ function App({ initialSession }: { initialSession?: Session | null }) {
       setUsageTick((t) => t + 1); setInput('');
       return;
     }
+    if (trimmed === '/compact') {
+      if (messages.length === 0) {
+        setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: '압축할 대화가 없습니다.' }]);
+        setInput('');
+        return;
+      }
+      setInput('');
+      const prevCount = messages.length;
+      setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: '대화를 요약하는 중...' }]);
+      try {
+        const ac = new AbortController();
+        const summaryReq = [...messages, { role: 'user', content: '지금까지의 대화를 한국어로 3~5문장으로 요약해줘. 앞으로 대화를 이어가는 데 필요한 핵심 맥락(작업 내용, 결정 사항, 파일/경로)만 담아. 요약문만 출력해.' }];
+        const { text: summary } = await chat(summaryReq as any, ac.signal);
+        const compacted = [{ role: 'system', content: '이전 대화 요약:\n' + summary }];
+        setMessages(compacted as Message[]);
+        setHistory((h) => [...h, { kind: 'info', text: '\u2713 대화 압축됨 (' + prevCount + '개 \u2192 요약 1개)\n\n' + summary }]);
+      } catch (e: any) {
+        setHistory((h) => [...h, { kind: 'error', text: '압축 실패: ' + (e?.message ?? e) }]);
+      }
+      return;
+    }
     if (trimmed === '/help') {
       setHistory((h) => [
         ...h,
@@ -816,8 +838,9 @@ function App({ initialSession }: { initialSession?: Session | null }) {
       setHistory((h) => { typeIdx = h.length; return [...h, { kind: 'assistant', text: '', provider: provNow }]; });
       await new Promise<void>((resolve) => {
         let i = 0;
-        const SPEED = 6;
-        const INTERVAL = 15;
+        // 답변 길이에 따라 타이핑 속도 자동 조절 (긴 답변은 빠르게)
+        const SPEED = reply.length > 1200 ? 24 : reply.length > 500 ? 12 : 6;
+        const INTERVAL = 12;
         const timer = setInterval(() => {
           i += SPEED;
           const done = i >= reply.length;
