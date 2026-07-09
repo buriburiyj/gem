@@ -21,10 +21,6 @@ type ServerConf = {
 
 const clients: Array<{ close: () => Promise<void> }> = [];
 
-type McpServerStatus = { name: string; toolCount: number; toolNames: string[]; ok: boolean; error?: string };
-let mcpStatus: McpServerStatus[] = [];
-export function getMcpStatus(): McpServerStatus[] { return mcpStatus; }
-
 function logMcp(msg: string): void {
   try {
     fs.appendFileSync(path.join(os.homedir(), '.claude', 'mcp.log'), new Date().toISOString() + ' ' + msg + '\n');
@@ -50,7 +46,6 @@ export async function loadMcpTools(): Promise<Record<string, any>> {
   }
 
   let merged: Record<string, any> = {};
-  mcpStatus = [];
 
   for (const [name, conf] of Object.entries(servers)) {
     try {
@@ -77,11 +72,9 @@ export async function loadMcpTools(): Promise<Record<string, any>> {
         merged[name + '__' + tName] = tDef;
       }
       clients.push(client as any);
-      mcpStatus.push({ name, toolCount: Object.keys(toolSet).length, toolNames: Object.keys(toolSet), ok: true });
       logMcp('[mcp] ' + name + ' 연결됨 (' + Object.keys(toolSet).length + '개 툴)');
     } catch (e: any) {
       logMcp('[mcp] ' + name + ' 연결 실패: ' + String(e?.message ?? e));
-      mcpStatus.push({ name, toolCount: 0, toolNames: [], ok: false, error: String(e?.message ?? e) });
     }
   }
 

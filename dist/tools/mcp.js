@@ -4,6 +4,8 @@ import os from 'node:os';
 import { createMCPClient } from '@ai-sdk/mcp';
 import { Experimental_StdioMCPTransport } from '@ai-sdk/mcp/mcp-stdio';
 const clients = [];
+let mcpStatus = [];
+export function getMcpStatus() { return mcpStatus; }
 function logMcp(msg) {
     try {
         fs.appendFileSync(path.join(os.homedir(), '.claude', 'mcp.log'), new Date().toISOString() + ' ' + msg + '\n');
@@ -29,6 +31,7 @@ export async function loadMcpTools() {
         return {};
     }
     let merged = {};
+    mcpStatus = [];
     for (const [name, conf] of Object.entries(servers)) {
         try {
             let client;
@@ -55,10 +58,12 @@ export async function loadMcpTools() {
                 merged[name + '__' + tName] = tDef;
             }
             clients.push(client);
+            mcpStatus.push({ name, toolCount: Object.keys(toolSet).length, toolNames: Object.keys(toolSet), ok: true });
             logMcp('[mcp] ' + name + ' 연결됨 (' + Object.keys(toolSet).length + '개 툴)');
         }
         catch (e) {
             logMcp('[mcp] ' + name + ' 연결 실패: ' + String(e?.message ?? e));
+            mcpStatus.push({ name, toolCount: 0, toolNames: [], ok: false, error: String(e?.message ?? e) });
         }
     }
     return merged;

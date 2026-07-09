@@ -49,15 +49,13 @@ import { loadConfig, saveConfig } from './config/store.js';
 import { setThemeMode, getColors, getThemeLabel, ThemeMode } from './ui/theme.js';
 import { setOllamaModel, getOllamaModel } from './llm/client.js';
 import { setGeminiModel, getGeminiModel, getGeminiRoute } from './llm/client.js';
-import { getMcpStatus, loadMcpTools } from './tools/mcp.js';
-import { scanSkills } from './tools/skills.js';
+import { getMcpStatus } from './tools/mcp.js';
 
 const SLASH_COMMANDS = [
   { name: 'help', description: '도움말 표시' },
   { name: 'clear', description: '대화 초기화' },
   { name: 'compact', description: '대화를 요약해 토큰 절약' },
   { name: 'mcp', description: '연결된 MCP 서버·툴 목록' },
-  { name: 'skills', description: '사용 가능한 스킬 목록' },
   { name: 'model', description: '모델 전환 (gemini/groq/ollama)' },
   { name: 'setup', description: '시작 위저드 다시 띄우기' },
   { name: 'theme', description: '테마 변경 (light/dark/auto)' },
@@ -409,8 +407,6 @@ function App({ initialSession }: { initialSession?: Session | null }) {
   const [trusted, setTrusted] = useState<boolean>(() => loadConfig().trusted === true);
 
   useEffect(() => {
-    // MCP 서버 백그라운드 프리로드 (시작 속도 영향 없음)
-    loadMcpTools().catch(() => {});
     if (config.configured) {
       setThemeMode(config.theme);
       setProvider(config.backend);
@@ -690,22 +686,6 @@ function App({ initialSession }: { initialSession?: Session | null }) {
         '  window:    ' + formatTokensCompact(CONTEXT_SIZE) + ' tokens',
         '  turns:     ' + String(uu.turns),
       ];
-      setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: lines.join('\n') }]);
-      setInput('');
-      return;
-    }
-    if (trimmed === '/skills') {
-      const sk = scanSkills();
-      let lines: string[];
-      if (sk.length === 0) {
-        lines = ['스킬', '', '  사용 가능한 스킬이 없습니다.', '  ~/.claude/skills/<이름>/SKILL.md 를 만드세요.'];
-      } else {
-        lines = ['스킬 (' + sk.length + '개)', ''];
-        for (const x of sk) {
-          lines.push('  \u2022 ' + x.name);
-          lines.push('     ' + x.description);
-        }
-      }
       setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: lines.join('\n') }]);
       setInput('');
       return;

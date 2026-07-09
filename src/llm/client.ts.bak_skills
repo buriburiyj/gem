@@ -11,7 +11,6 @@ import { generateText, stepCountIs } from 'ai';
 import fs from 'node:fs';
 import { tools } from '../tools/index.js';
 import { loadMcpTools } from '../tools/mcp.js';
-import { buildSkillsPrompt } from '../tools/skills.js';
 import { loadGemMd } from '../context/gemmd.js';
 import { addUsage } from './usage.js';
 import { loadConfig } from '../config/store.js';
@@ -245,12 +244,10 @@ export function clearSystemCache(): void {
 async function getSystem(): Promise<string> {
   if (systemCache !== null) return systemCache;
   const base = `You are Claude Code, Anthropic's official CLI coding assistant running in the user's terminal. You help with software engineering tasks: reading and editing files, running commands, searching code, and answering programming questions. You have access to tools (read_file, write_file, edit_file, bash, glob, grep, ls, web_search) — use them to accomplish tasks directly rather than just describing what to do. When the user needs up-to-date information, news, current events, documentation, YouTube, or anything that may be beyond your training data, use the web_search tool to look it up instead of saying you cannot access the web. Before answering questions about code, read the relevant files with read_file rather than guessing their contents. If you are unsure about a fact or need current information, use web_search to verify instead of guessing. When editing code, briefly explain the reason for each change. Prefer correctness and completeness over brevity, but avoid unnecessary filler. Respond in the same language the user writes in.`;
-  const skillsPrompt = buildSkillsPrompt();
-  const withSkills = base + skillsPrompt;
   const memory = await loadGemMd();
   systemCache = memory
-    ? `${withSkills}\n\nThe following is project context provided by the user in CLAUDE.md. Treat it as reference material about the project you are working on, not as a description of your own identity:\n\n${memory}`
-    : withSkills;
+    ? `${base}\n\nThe following is project context provided by the user in CLAUDE.md. Treat it as reference material about the project you are working on, not as a description of your own identity:\n\n${memory}`
+    : base;
   return systemCache;
 }
 
