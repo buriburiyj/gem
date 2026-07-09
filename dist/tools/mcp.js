@@ -40,6 +40,7 @@ export async function loadMcpTools() {
                     command: conf.command,
                     args: conf.args ?? [],
                     env: conf.env,
+                    stderr: 'ignore',
                 });
                 client = await createMCPClient({ transport });
             }
@@ -67,6 +68,43 @@ export async function loadMcpTools() {
         }
     }
     return merged;
+}
+const CONFIG_PATH = path.join(os.homedir(), '.claude', 'mcp.json');
+function readConfig() {
+    try {
+        const parsed = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+        return { mcpServers: parsed.mcpServers ?? parsed.servers ?? {} };
+    }
+    catch {
+        return { mcpServers: {} };
+    }
+}
+function writeConfig(cfg) {
+    fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+}
+export function listMcpConfig() {
+    const cfg = readConfig();
+    return Object.entries(cfg.mcpServers).map(([name, c]) => ({
+        name,
+        command: c.command ? [c.command, ...(c.args ?? [])].join(' ') : (c.url ?? '(unknown)'),
+    }));
+}
+export function addMcpServer(name, command, args) {
+    if (!name || !command)
+        return 'error: 이름과 명령이 필요합니다.';
+    const cfg = readConfig();
+    cfg.mcpServers[name] = { command, args };
+    writeConfig(cfg);
+    return 'ok: ' + name + ' 추가됨 (' + command + ' ' + args.join(' ') + ')';
+}
+export function removeMcpServer(name) {
+    const cfg = readConfig();
+    if (!cfg.mcpServers[name])
+        return 'error: ' + name + ' 서버가 없습니다.';
+    delete cfg.mcpServers[name];
+    writeConfig(cfg);
+    return 'ok: ' + name + ' 삭제됨';
 }
 export async function closeMcpClients() {
     await Promise.all(clients.map((c) => c.close().catch(() => { })));

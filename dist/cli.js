@@ -20,7 +20,7 @@ import { loadConfig, saveConfig } from './config/store.js';
 import { setThemeMode, getColors, getThemeLabel } from './ui/theme.js';
 import { setOllamaModel, getOllamaModel } from './llm/client.js';
 import { setGeminiModel, getGeminiModel, getGeminiRoute } from './llm/client.js';
-import { getMcpStatus, loadMcpTools } from './tools/mcp.js';
+import { getMcpStatus, loadMcpTools, addMcpServer, removeMcpServer, listMcpConfig } from './tools/mcp.js';
 import { scanSkills } from './tools/skills.js';
 const SLASH_COMMANDS = [
     { name: 'help', description: '도움말 표시' },
@@ -525,27 +525,78 @@ function App({ initialSession }) {
             setInput('');
             return;
         }
-        if (trimmed === '/mcp') {
-            const st = getMcpStatus();
-            let lines;
-            if (st.length === 0) {
-                lines = ['MCP 서버', '', '  연결된 서버가 없습니다.', '  ~/.claude/mcp.json 에 서버를 추가하세요.'];
+        if (trimmed.startsWith('/mcp')) {
+            const parts = trimmed.split(/\s+/);
+            const sub = parts[1];
+            // /mcp help 또는 알 수 없는 서브명령 → 사용법
+            if (sub === 'help' || (sub && !['add', 'remove', 'rm', 'list'].includes(sub))) {
+                const lines = [
+                    'MCP 명령어',
+                    '',
+                    '  /mcp                      연결된 서버·툴 상태 보기',
+                    '  /mcp list                 등록된 서버 목록 (설정 기준)',
+                    '  /mcp add <이름> <명령> [인자...]   서버 추가',
+                    '  /mcp remove <이름>        서버 삭제',
+                    '',
+                    '  예) /mcp add github npx -y @modelcontextprotocol/server-github',
+                ];
+                setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: lines.join('\n') }]);
+                setInput('');
+                return;
             }
-            else {
-                lines = ['MCP 서버 (' + st.length + '개)', ''];
-                for (const s of st) {
-                    if (s.ok) {
-                        lines.push('  \u2713 ' + s.name + ' — ' + s.toolCount + '개 툴');
-                        lines.push('     ' + s.toolNames.join(', '));
-                    }
-                    else {
-                        lines.push('  \u2717 ' + s.name + ' — 실패: ' + (s.error ?? ''));
+            // /mcp add <이름> <명령> [인자...]
+            if (sub === 'add') {
+                const name = parts[2];
+                const cmd = parts[3];
+                const args = parts.slice(4);
+                const res = name && cmd ? addMcpServer(name, cmd, args) : 'error: 사용법: /mcp add <이름> <명령> [인자...]';
+                const note = res.startsWith('ok') ? '\n\n  (재시작하면 적용됩니다: claude 다시 실행)' : '';
+                setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: 'MCP 추가\n\n  ' + res + note }]);
+                setInput('');
+                return;
+            }
+            // /mcp remove <이름>
+            if (sub === 'remove' || sub === 'rm') {
+                const name = parts[2];
+                const res = name ? removeMcpServer(name) : 'error: 사용법: /mcp remove <이름>';
+                const note = res.startsWith('ok') ? '\n\n  (재시작하면 적용됩니다: claude 다시 실행)' : '';
+                setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: 'MCP 삭제\n\n  ' + res + note }]);
+                setInput('');
+                return;
+            }
+            // /mcp list — 설정 파일 기준 목록
+            if (sub === 'list') {
+                const cfg = listMcpConfig();
+                const lines = cfg.length === 0
+                    ? ['MCP 설정', '', '  등록된 서버가 없습니다.', '  추가: /mcp add <이름> <명령> [인자...]']
+                    : ['MCP 설정 (' + cfg.length + '개)', '', ...cfg.map((c) => '  \u2022 ' + c.name + '  →  ' + c.command)];
+                setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: lines.join('\n') }]);
+                setInput('');
+                return;
+            }
+            // /mcp (인자 없음) — 연결 상태 표시
+            {
+                const st = getMcpStatus();
+                let lines;
+                if (st.length === 0) {
+                    lines = ['MCP 서버', '', '  연결된 서버가 없습니다.', '  ~/.claude/mcp.json 에 서버를 추가하세요.'];
+                }
+                else {
+                    lines = ['MCP 서버 (' + st.length + '개)', ''];
+                    for (const s of st) {
+                        if (s.ok) {
+                            lines.push('  \u2713 ' + s.name + ' — ' + s.toolCount + '개 툴');
+                            lines.push('     ' + s.toolNames.join(', '));
+                        }
+                        else {
+                            lines.push('  \u2717 ' + s.name + ' — 실패: ' + (s.error ?? ''));
+                        }
                     }
                 }
+                setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: lines.join('\n') }]);
+                setInput('');
+                return;
             }
-            setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: lines.join('\n') }]);
-            setInput('');
-            return;
         }
         if (trimmed === '/setup') {
             setWizardDone(false);
