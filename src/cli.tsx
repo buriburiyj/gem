@@ -50,7 +50,7 @@ import { setThemeMode, getColors, getThemeLabel, ThemeMode } from './ui/theme.js
 import { setOllamaModel, getOllamaModel } from './llm/client.js';
 import { setGeminiModel, getGeminiModel, getGeminiRoute } from './llm/client.js';
 import { getMcpStatus, loadMcpTools, addMcpServer, removeMcpServer, listMcpConfig } from './tools/mcp.js';
-import { scanSkills } from './tools/skills.js';
+import { scanSkills, findSkill } from './tools/skills.js';
 
 const SLASH_COMMANDS = [
   { name: 'help', description: '도움말 표시' },
@@ -58,6 +58,7 @@ const SLASH_COMMANDS = [
   { name: 'compact', description: '대화를 요약해 토큰 절약' },
   { name: 'mcp', description: '연결된 MCP 서버·툴 목록' },
   { name: 'skills', description: '사용 가능한 스킬 목록' },
+  { name: 'skill', description: '스킬 실행: /skill run <이름>' },
   { name: 'model', description: '모델 전환 (gemini/groq/ollama)' },
   { name: 'setup', description: '시작 위저드 다시 띄우기' },
   { name: 'theme', description: '테마 변경 (light/dark/auto)' },
@@ -376,7 +377,7 @@ function RewindView({
   );
 }
 
-function App({ initialSession }: { initialSession?: Session | null }) {
+function App({ initialSession, initialInput }: { initialSession?: Session | null; initialInput?: string }) {
   const { exit } = useApp();
   const [input, setInput] = useState('');
   const [history, setHistory] = useState<DisplayItem[]>(() => {
@@ -407,6 +408,14 @@ function App({ initialSession }: { initialSession?: Session | null }) {
   const [config, setConfig] = useState(() => loadConfig());
   const [wizardDone, setWizardDone] = useState(false);
   const [trusted, setTrusted] = useState<boolean>(() => loadConfig().trusted === true);
+
+  useEffect(() => {
+    // initialInput 자동 실행 (claude skill run 등)
+    if (initialInput && initialInput.trim()) {
+      const t = setTimeout(() => { void handleSubmit(initialInput); }, 300);
+      return () => clearTimeout(t);
+    }
+  }, []);
 
   useEffect(() => {
     // MCP 서버 백그라운드 프리로드 (시작 속도 영향 없음)
@@ -694,6 +703,45 @@ function App({ initialSession }: { initialSession?: Session | null }) {
       setInput('');
       return;
     }
+    if (trimmed === '/skill' || trimmed.startsWith('/skill ')) {
+      const parts = trimmed.split(/\s+/);
+      const sub = parts[1];
+      if (!sub || sub === 'help') {
+        const lines = [
+          '스킬 명령어',
+          '',
+          '  /skills           사용 가능한 스킬 목록',
+          '  /skill run <이름>  스킬 실행',
+          '  /skill help       이 도움말',
+        ];
+        setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: lines.join('\n') }]);
+        setInput('');
+        return;
+      }
+      if (sub === 'run') {
+        const name = parts[2];
+        if (!name) {
+          setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: '사용법: /skill run <이름>' }]);
+          setInput('');
+          return;
+        }
+        const sk = findSkill(name);
+        if (!sk) {
+          setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: '스킬을 찾을 수 없습니다: ' + name + ' (/skills 로 확인)' }]);
+          setInput('');
+          return;
+        }
+        const extra = parts.slice(3).join(' ');
+        const instr = 'Use the "' + name + '" skill. First read its instructions at ' + sk.skillFile +
+          ' with the read_file tool, then carry out the task.' + (extra ? ' Additional instructions: ' + extra : '');
+        setInput('');
+        void handleSubmit(instr);
+        return;
+      }
+      setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: '알 수 없는 스킬 명령: ' + sub + ' (/skill help 참고)' }]);
+      setInput('');
+      return;
+    }
     if (trimmed === '/skills') {
       const sk = scanSkills();
       let lines: string[];
@@ -953,7 +1001,14 @@ function App({ initialSession }: { initialSession?: Session | null }) {
       if (err?.name === 'AbortError' || String(err?.message ?? '').includes('aborted')) {
         setHistory((h) => [...h, { kind: 'info', text: '⎿  중단됨 (esc)' }]);
       } else {
-        setHistory((h) => [...h, { kind: 'error', text: err?.message ?? String(err) }]);
+        const raw = String(err?.message ?? err);
+        let friendly: string;
+        if (raw.includes('All providers exhausted') || raw.includes('429') || raw.includes('quota') || raw.includes('RESOURCE_EXHAUSTED') || raw.includes('rate')) {
+          friendly = '지금 요청이 몰려 잠시 응답할 수 없어요. 30초쯤 뒤에 다시 시도해 주세요.\n(무료 API 사용 한도에 일시적으로 도달했습니다.)';
+        } else {
+          friendly = '오류가 발생했어요: ' + raw;
+        }
+        setHistory((h) => [...h, { kind: 'error', text: friendly }]);
       }
     } finally {
       setBusy(false); setAbortController(null); setUsageTick((t) => t + 1); invalidateFileCache();
@@ -1242,6 +1297,42 @@ async function main() {
 
   // 세션 이어서 시작: claude resume [id] | claude --continue
   let initialSession = null;
+  let initialInput: string | undefined;
+  if (cmd === 'skill') {
+    const sub = args[1];
+    if (!sub || sub === 'help') {
+      console.log('스킬 명령어');
+      console.log('');
+      console.log('  claude skill list              사용 가능한 스킬 목록');
+      console.log('  claude skill run <이름> [지시]  스킬 실행');
+      console.log('  claude skill help              이 도움말');
+      console.log('');
+      console.log('  스킬 위치: ~/.claude/skills/<이름>/SKILL.md');
+      process.exit(0);
+    }
+    if (sub === 'list') {
+      const sk = scanSkills();
+      if (sk.length === 0) {
+        console.log('사용 가능한 스킬이 없습니다. ~/.claude/skills/<이름>/SKILL.md 를 만드세요.');
+      } else {
+        console.log('스킬 (' + sk.length + '개):');
+        for (const x of sk) console.log('  • ' + x.name + ' — ' + x.description);
+      }
+      process.exit(0);
+    }
+    if (sub === 'run') {
+      const name = args[2];
+      if (!name) { console.log('사용법: claude skill run <이름> [추가 지시]'); process.exit(1); }
+      const sk = findSkill(name);
+      if (!sk) { console.log('스킬을 찾을 수 없습니다: ' + name + ' (claude skill list 로 확인)'); process.exit(1); }
+      const extra = args.slice(3).join(' ');
+      initialInput = 'Use the "' + name + '" skill. First read its instructions at ' + sk.skillFile +
+        ' with the read_file tool, then carry out the task.' + (extra ? ' Additional instructions: ' + extra : '');
+    } else {
+      console.log('알 수 없는 스킬 명령: ' + sub + ' (claude skill help 참고)');
+      process.exit(1);
+    }
+  }
   if (cmd === 'resume' || cmd === '--continue' || cmd === '-c') {
     const id = args[1];
     initialSession = id ? await loadSession(id) : await loadLatest();
@@ -1253,7 +1344,7 @@ async function main() {
     console.log(`세션 복원: ${initialSession.id} (${initialSession.messages.length}개 메시지)`);
   }
 
-  render(<App initialSession={initialSession} />, { exitOnCtrlC: false });
+  render(<App initialSession={initialSession} initialInput={initialInput} />, { exitOnCtrlC: false });
 }
 
 main();

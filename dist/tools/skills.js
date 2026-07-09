@@ -51,6 +51,9 @@ export function scanSkills() {
     skillCache = found;
     return skillCache;
 }
+export function findSkill(name) {
+    return scanSkills().find((x) => x.name === name);
+}
 export function clearSkillCache() {
     skillCache = null;
 }

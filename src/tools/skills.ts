@@ -51,6 +51,10 @@ export function scanSkills(): Skill[] {
   return skillCache;
 }
 
+export function findSkill(name: string): Skill | undefined {
+  return scanSkills().find((x) => x.name === name);
+}
+
 export function clearSkillCache(): void {
   skillCache = null;
 }
