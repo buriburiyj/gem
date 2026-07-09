@@ -52,6 +52,16 @@ export async function loadSession(id) {
         return null;
     }
 }
+export async function deleteSession(id) {
+    try {
+        const file = path.join(SESSION_DIR, `${id}.json`);
+        await fs.unlink(file);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
 export async function loadLatest() {
     const all = await listSessions();
     return all[0] ?? null;

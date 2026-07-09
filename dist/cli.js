@@ -14,7 +14,7 @@ import { approvalBus, answerApproval, } from './permissions/prompt.js';
 import { expandMentions, buildMessageWithAttachments, } from './context/mentions.js';
 import { runInit } from './commands/init.js';
 import { MentionInput, invalidateFileCache } from './ui/MentionInput.js';
-import { newSessionId, saveSession, loadLatest, loadSession, listSessions, groupByCwd, summarizeSession, } from './session/store.js';
+import { newSessionId, saveSession, loadLatest, loadSession, deleteSession, listSessions, groupByCwd, summarizeSession, } from './session/store.js';
 import { StartupWizard } from './ui/StartupWizard.js';
 import { loadConfig, saveConfig } from './config/store.js';
 import { setThemeMode, getColors, getThemeLabel } from './ui/theme.js';
@@ -35,6 +35,7 @@ const SLASH_COMMANDS = [
     { name: 'exit', description: '종료' },
     { name: 'resume', description: '최근 세션 이어서 진행' },
     { name: 'sessions', description: '저장된 세션 목록' },
+    { name: 'delete', description: '세션 삭제: /delete <id>' },
 ];
 function summarizeInput(name, input) {
     if (name === 'web_search')
@@ -565,6 +566,18 @@ function App({ initialSession }) {
             setInput('');
             return;
         }
+        if (trimmed.startsWith('/delete')) {
+            const arg = trimmed.split(/\s+/)[1];
+            if (!arg) {
+                setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'error', text: '사용법: /delete <id>' }]);
+                setInput('');
+                return;
+            }
+            const ok = await deleteSession(arg);
+            setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: ok ? 'info' : 'error', text: ok ? `\u2713 세션 삭제됨: ${arg}` : `세션을 찾을 수 없습니다: ${arg}` }]);
+            setInput('');
+            return;
+        }
         if (trimmed.startsWith('/resume')) {
             const arg = trimmed.split(/\s+/)[1];
             const target = arg ? await loadSession(arg) : await loadLatest();
@@ -747,6 +760,16 @@ async function main() {
     const args = process.argv.slice(2);
     const cmd = args[0];
     // 세션 목록 보기: claude sessions | claude --list
+    if (cmd === 'delete') {
+        const id = args[1];
+        if (!id) {
+            console.log('사용법: claude delete <id>');
+            process.exit(1);
+        }
+        const ok = await deleteSession(id);
+        console.log(ok ? '\u2713 세션 삭제됨: ' + id : '세션을 찾을 수 없습니다: ' + id);
+        process.exit(ok ? 0 : 1);
+    }
     if (cmd === 'sessions' || cmd === '--list') {
         const all = await listSessions();
         if (all.length === 0) {

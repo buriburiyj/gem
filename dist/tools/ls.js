@@ -30,7 +30,7 @@ export const lsTool = tool({
             const entries = await readdir(abs);
             const items = [];
             for (const name of entries) {
-                if (name === 'node_modules' || name === '.git') {
+                if (['node_modules', '.git', 'dist', 'build', '.next', '.cache', '.pnpm-store', 'coverage', '.gem'].includes(name)) {
                     items.push({ name, type: 'dir' });
                     continue;
                 }
