@@ -1,8 +1,8 @@
 import dotenv from 'dotenv';
 import path from 'node:path';
 import os from 'node:os';
-dotenv.config();
-dotenv.config({ path: path.join(os.homedir(), '.claude', '.env') });
+dotenv.config({ quiet: true });
+dotenv.config({ path: path.join(os.homedir(), '.claude', '.env'), quiet: true });
 
 import { google } from '@ai-sdk/google';
 import { groq } from '@ai-sdk/groq';
