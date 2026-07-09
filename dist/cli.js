@@ -783,13 +783,7 @@ function App({ initialSession }) {
 async function main() {
     const args = process.argv.slice(2);
     const cmd = args[0];
-    // --version
-    if (cmd === '--version' || cmd === '-v') {
-        console.log('claude v0.0.1');
-        process.exit(0);
-    }
-    // --help
-    if (cmd === '--help' || cmd === '-h' || cmd === 'help') {
+    const printHelp = () => {
         const lines = [
             '',
             '  \x1b[1mClaude Code\x1b[0m — AI 코딩 어시스턴트 \x1b[2m(v0.0.1)\x1b[0m',
@@ -808,7 +802,22 @@ async function main() {
             '',
         ];
         console.log(lines.join('\n'));
+    };
+    // --version
+    if (cmd === '--version' || cmd === '-v') {
+        console.log('claude v0.0.1');
         process.exit(0);
+    }
+    // --help
+    if (cmd === '--help' || cmd === '-h' || cmd === 'help') {
+        printHelp();
+        process.exit(0);
+    }
+    // 알 수 없는 옵션(--xxx)이면 도움말 표시
+    if (cmd && cmd.startsWith('-') && !['--help', '-h', 'help', '--version', '-v', '--list', '--continue', '-c'].includes(cmd)) {
+        console.log('\n  \x1b[2m알 수 없는 옵션: ' + cmd + '\x1b[0m');
+        printHelp();
+        process.exit(1);
     }
     // 세션 목록 보기: claude sessions | claude --list
     if (cmd === 'delete') {
