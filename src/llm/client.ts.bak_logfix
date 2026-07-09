@@ -8,7 +8,6 @@ import { google } from '@ai-sdk/google';
 import { groq } from '@ai-sdk/groq';
 import { createOllama } from 'ollama-ai-provider-v2';
 import { generateText, stepCountIs } from 'ai';
-import fs from 'node:fs';
 import { tools } from '../tools/index.js';
 import { loadGemMd } from '../context/gemmd.js';
 import { addUsage } from './usage.js';
@@ -161,13 +160,6 @@ function getModel() {
   throw new Error('Manual mode: LLM not available');
 }
 
-function logFallback(msg: string): void {
-  try {
-    const dir = path.join(os.homedir(), '.claude');
-    fs.appendFileSync(path.join(dir, 'gem.log'), new Date().toISOString() + ' ' + msg + '\n');
-  } catch {}
-}
-
 function shouldFallback(err: any): boolean {
   const status = err?.statusCode ?? err?.lastError?.statusCode;
   const msg = String(err?.message ?? err);
@@ -310,7 +302,9 @@ export async function chat(
       if (err?.name === 'AbortError' || signal?.aborted) throw err;
       const before = state.current;
       if (shouldFallback(err) && fallback()) {
-        logFallback(`[fallback] ${before} → ${state.current} (${err?.statusCode ?? ''} ${String(err?.message ?? err).slice(0, 120)})`);
+        console.error(
+          `[fallback] ${before} → ${state.current} (${err?.statusCode ?? ''} ${String(err?.message ?? err).slice(0, 120)})`,
+        );
         continue;
       }
       throw err;

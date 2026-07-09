@@ -7,6 +7,7 @@ import { google } from '@ai-sdk/google';
 import { groq } from '@ai-sdk/groq';
 import { createOllama } from 'ollama-ai-provider-v2';
 import { generateText, stepCountIs } from 'ai';
+import fs from 'node:fs';
 import { tools } from '../tools/index.js';
 import { loadGemMd } from '../context/gemmd.js';
 import { addUsage } from './usage.js';
@@ -142,6 +143,13 @@ function getModel() {
         return ollama(state.ollamaModel);
     throw new Error('Manual mode: LLM not available');
 }
+function logFallback(msg) {
+    try {
+        const dir = path.join(os.homedir(), '.claude');
+        fs.appendFileSync(path.join(dir, 'gem.log'), new Date().toISOString() + ' ' + msg + '\n');
+    }
+    catch { }
+}
 function shouldFallback(err) {
     const status = err?.statusCode ?? err?.lastError?.statusCode;
     const msg = String(err?.message ?? err);
@@ -260,14 +268,27 @@ export async function chat(messages, signal) {
                     totalTokens: u.totalTokens,
                 });
             }
-            return { text: result.text, usedProvider: state.current };
+            let finalText = result.text ?? '';
+            if (!finalText.trim() && Array.isArray(result.steps)) {
+                for (let i = result.steps.length - 1; i >= 0; i--) {
+                    const st = result.steps[i];
+                    if (st && typeof st.text === 'string' && st.text.trim()) {
+                        finalText = st.text;
+                        break;
+                    }
+                }
+            }
+            if (!finalText.trim()) {
+                finalText = '(응답을 생성하지 못했어요. 다시 한 번 질문해 주세요.)';
+            }
+            return { text: finalText, usedProvider: state.current };
         }
         catch (err) {
             if (err?.name === 'AbortError' || signal?.aborted)
                 throw err;
             const before = state.current;
             if (shouldFallback(err) && fallback()) {
-                console.error(`[fallback] ${before} → ${state.current} (${err?.statusCode ?? ''} ${String(err?.message ?? err).slice(0, 120)})`);
+                logFallback(`[fallback] ${before} → ${state.current} (${err?.statusCode ?? ''} ${String(err?.message ?? err).slice(0, 120)})`);
                 continue;
             }
             throw err;
