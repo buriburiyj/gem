@@ -9,6 +9,7 @@ import { createOllama } from 'ollama-ai-provider-v2';
 import { generateText, stepCountIs } from 'ai';
 import fs from 'node:fs';
 import { tools } from '../tools/index.js';
+import { loadMcpTools } from '../tools/mcp.js';
 import { loadGemMd } from '../context/gemmd.js';
 import { addUsage } from './usage.js';
 import { loadConfig } from '../config/store.js';
@@ -113,6 +114,19 @@ const CLASSIFIER_PROMPT = `You are a task routing AI. Analyze the user's request
 A task is COMPLEX if it meets ONE OR MORE: (1) needs 4+ steps/tool calls, (2) asks for architecture/strategy/design ("how"/"why"), (3) is broad/ambiguous needing extensive investigation, (4) deep debugging or root-cause analysis.
 A task is SIMPLE if it is specific, bounded, low operational complexity (1-3 tool calls). Operational simplicity overrides strategic phrasing.
 Respond ONLY with valid JSON: {"model_choice":"simple"} or {"model_choice":"complex"}. No other text.`;
+let mcpTools = null;
+let mcpLoading = null;
+async function getAllTools() {
+    if (mcpTools)
+        return { ...tools, ...mcpTools };
+    if (!mcpLoading) {
+        mcpLoading = loadMcpTools()
+            .then((m) => { mcpTools = m; return m; })
+            .catch(() => { mcpTools = {}; return {}; });
+    }
+    const m = await mcpLoading;
+    return { ...tools, ...m };
+}
 function classifyComplexity(messages, _signal) {
     // 품질 우선: 기본은 pro(complex), 아주 단순한 것만 flash(simple)
     const rev = [...messages].reverse();
@@ -251,11 +265,12 @@ export async function chat(messages, signal) {
             const activeModel = state.current === 'gemini'
                 ? google(routedGemini ?? (state.geminiModel === 'auto' ? 'gemini-2.5-flash' : state.geminiModel))
                 : getModel();
+            const allTools = await getAllTools();
             const result = await generateText({
                 model: activeModel,
                 system,
                 messages,
-                tools,
+                tools: allTools,
                 stopWhen: stepCountIs(10),
                 maxRetries: 0,
                 abortSignal: signal,
