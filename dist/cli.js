@@ -14,7 +14,7 @@ import { approvalBus, answerApproval, } from './permissions/prompt.js';
 import { expandMentions, buildMessageWithAttachments, } from './context/mentions.js';
 import { runInit } from './commands/init.js';
 import { MentionInput, invalidateFileCache } from './ui/MentionInput.js';
-import { newSessionId, saveSession, loadLatest, loadSession, listSessions, summarizeSession, } from './session/store.js';
+import { newSessionId, saveSession, loadLatest, loadSession, listSessions, groupByCwd, summarizeSession, } from './session/store.js';
 import { StartupWizard } from './ui/StartupWizard.js';
 import { loadConfig, saveConfig } from './config/store.js';
 import { setThemeMode, getColors, getThemeLabel } from './ui/theme.js';
@@ -552,8 +552,15 @@ function App({ initialSession }) {
                 setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: '저장된 세션이 없습니다.' }]);
             }
             else {
-                const lines = all.slice(0, 20).map(summarizeSession).join('\n');
-                setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: `최근 세션 ${all.length}개:\n${lines}\n\n복원: /resume <id>` }]);
+                const groups = groupByCwd(all);
+                const blocks = [];
+                for (const [dir, sess] of groups) {
+                    const home = process.env.HOME || '';
+                    const shortDir = home && dir.startsWith(home) ? '~' + dir.slice(home.length) : dir;
+                    const rows = sess.slice(0, 20).map((x) => '   ' + summarizeSession(x)).join('\n');
+                    blocks.push('\uD83D\uDCC1 ' + shortDir + '\n' + rows);
+                }
+                setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: `최근 세션 (${groups.size}개 폴더):\n\n${blocks.join('\n\n')}\n\n복원: /resume <id>` }]);
             }
             setInput('');
             return;
@@ -565,6 +572,12 @@ function App({ initialSession }) {
                 setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'error', text: arg ? `세션을 찾을 수 없습니다: ${arg}` : '복원할 세션이 없습니다.' }]);
                 setInput('');
                 return;
+            }
+            if (target.cwd) {
+                try {
+                    process.chdir(target.cwd);
+                }
+                catch { }
             }
             setMessages(target.messages);
             setInputHistory(target.inputHistory ?? []);
@@ -740,11 +753,17 @@ async function main() {
             console.log('저장된 세션이 없습니다.');
         }
         else {
-            console.log('저장된 세션:');
-            for (const sess of all) {
-                console.log('  ' + sess.id + '  ' + summarizeSession(sess));
+            const groups = groupByCwd(all);
+            console.log('저장된 세션 (' + groups.size + '개 폴더):\n');
+            for (const [dir, sess] of groups) {
+                const home = process.env.HOME || '';
+                const shortDir = home && dir.startsWith(home) ? '~' + dir.slice(home.length) : dir;
+                console.log('\uD83D\uDCC1 ' + shortDir);
+                for (const x of sess)
+                    console.log('   ' + summarizeSession(x));
+                console.log('');
             }
-            console.log('\n이어서 시작: claude resume <id>');
+            console.log('이어서 시작: claude resume <id>');
         }
         process.exit(0);
     }
@@ -753,6 +772,12 @@ async function main() {
     if (cmd === 'resume' || cmd === '--continue' || cmd === '-c') {
         const id = args[1];
         initialSession = id ? await loadSession(id) : await loadLatest();
+        if (initialSession && initialSession.cwd) {
+            try {
+                process.chdir(initialSession.cwd);
+            }
+            catch { }
+        }
         if (!initialSession) {
             console.log(id ? `세션을 찾을 수 없습니다: ${id}` : '이어서 시작할 세션이 없습니다.');
             process.exit(1);

@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-const SESSION_DIR = path.join(process.cwd(), '.gem', 'sessions');
+import os from 'node:os';
+const SESSION_DIR = path.join(os.homedir(), '.claude', 'sessions');
 async function ensureDir() {
     await fs.mkdir(SESSION_DIR, { recursive: true });
 }
@@ -62,5 +63,15 @@ export function summarizeSession(s) {
     const pad = (n) => String(n).padStart(2, '0');
     const when = `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
     return `${s.id}  ${when}  (${s.messages.length}msg)  ${preview}`;
+}
+export function groupByCwd(sessions) {
+    const groups = new Map();
+    for (const sess of sessions) {
+        const key = sess.cwd || '(unknown)';
+        if (!groups.has(key))
+            groups.set(key, []);
+        groups.get(key).push(sess);
+    }
+    return groups;
 }
 //# sourceMappingURL=store.js.map

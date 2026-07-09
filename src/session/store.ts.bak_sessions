@@ -1,6 +1,5 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
 
 export type SessionMessage = { role: 'user' | 'assistant' | 'system'; content: string };
 
@@ -13,7 +12,7 @@ export type Session = {
   inputHistory: string[];
 };
 
-const SESSION_DIR = path.join(os.homedir(), '.claude', 'sessions');
+const SESSION_DIR = path.join(process.cwd(), '.gem', 'sessions');
 
 async function ensureDir() {
   await fs.mkdir(SESSION_DIR, { recursive: true });
@@ -80,15 +79,4 @@ export function summarizeSession(s: Session): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   const when = `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   return `${s.id}  ${when}  (${s.messages.length}msg)  ${preview}`;
-}
-
-
-export function groupByCwd(sessions: Session[]): Map<string, Session[]> {
-  const groups = new Map<string, Session[]>();
-  for (const sess of sessions) {
-    const key = sess.cwd || '(unknown)';
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(sess);
-  }
-  return groups;
 }
