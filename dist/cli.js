@@ -44,6 +44,8 @@ const SLASH_COMMANDS = [
     { name: 'delete', description: '세션 삭제: /delete <id>' },
 ];
 function summarizeInput(name, input) {
+    if (name === 'skill')
+        return input?.name ?? '';
     if (name === 'web_search')
         return input?.query ?? '';
     if (name === 'read_file')
@@ -80,6 +82,7 @@ function toolDisplayName(name) {
         glob: 'Glob',
         grep: 'Grep',
         ls: 'List',
+        skill: 'Skill',
     };
     return map[name] ?? name;
 }
@@ -225,7 +228,12 @@ function App({ initialSession, initialInput }) {
     useEffect(() => {
         // initialInput 자동 실행 (claude skill run 등)
         if (initialInput && initialInput.trim()) {
-            const t = setTimeout(() => { void handleSubmit(initialInput); }, 300);
+            const t = setTimeout(() => {
+                const mm = initialInput.match(/Use the \"([^\"]+)\" skill/);
+                if (mm)
+                    setHistory((h) => [...h, { kind: 'tool_call', id: 'skill-' + Date.now(), name: 'skill', input: { name: mm[1] }, ok: true, result: undefined }]);
+                void handleSubmit(initialInput, { silent: true });
+            }, 300);
             return () => clearTimeout(t);
         }
     }, []);
@@ -371,7 +379,7 @@ function App({ initialSession, initialInput }) {
         setHistory(rebuilt);
         setShowRewind(false);
     };
-    const handleSubmit = async (value) => {
+    const handleSubmit = async (value, opts) => {
         const trimmed = value.trim();
         if (!trimmed || busy)
             return;
@@ -548,7 +556,8 @@ function App({ initialSession, initialInput }) {
                 const instr = 'Use the "' + name + '" skill. First read its instructions at ' + sk.skillFile +
                     ' with the read_file tool, then carry out the task.' + (extra ? ' Additional instructions: ' + extra : '');
                 setInput('');
-                void handleSubmit(instr);
+                setHistory((h) => [...h, { kind: 'tool_call', id: 'skill-' + Date.now(), name: 'skill', input: { name }, ok: true, result: undefined }]);
+                void handleSubmit(instr, { silent: true });
                 return;
             }
             setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: '알 수 없는 스킬 명령: ' + sub + ' (/skill help 참고)' }]);
@@ -805,7 +814,8 @@ function App({ initialSession, initialInput }) {
             const files = expansion.attachments.map((a) => (a.error ? `@${a.path} (에러)` : `@${a.path}`)).join(', ');
             displayText = `${trimmed}\n  ⎿ 첨부: ${files}`;
         }
-        setHistory((h) => [...h, { kind: 'user', text: displayText }]);
+        if (!opts?.silent)
+            setHistory((h) => [...h, { kind: 'user', text: displayText }]);
         try {
             const ac = new AbortController();
             setAbortController(ac);
