@@ -150,7 +150,7 @@ async function getAllTools(): Promise<Record<string, any>> {
 }
 
 function classifyComplexity(messages: any[], _signal?: AbortSignal): 'simple' | 'complex' {
-  // 품질 우선: 기본은 pro(complex), 아주 단순한 것만 flash(simple)
+  // 기본은 flash(simple, 빠름). 확실히 복잡한 작업만 pro(complex).
   const rev = [...messages].reverse();
   const lastUser = rev.find((m: any) => m.role === 'user');
   let text = '';
@@ -158,12 +158,25 @@ function classifyComplexity(messages: any[], _signal?: AbortSignal): 'simple' | 
     if (typeof lastUser.content === 'string') text = lastUser.content;
     else if (Array.isArray(lastUser.content)) text = lastUser.content.map((p: any) => (p && p.text) ? p.text : '').join(' ');
   }
-  const t = text.trim().toLowerCase();
-  // 짧은 인사/확인만 flash로
-  const simplePhrases = ['안녕','하이','hi','hello','ok','오케이','응','그래','고마','thanks','thank you','네','yes','no','아니'];
-  if (t.length <= 30 && simplePhrases.some((p) => t.includes(p))) return 'simple';
-  // 그 외 모든 것은 품질을 위해 pro
-  return 'complex';
+  const raw = text.trim();
+  const t = raw.toLowerCase();
+
+  // 긴 메시지 → 복잡
+  if (raw.length >= 400) return 'complex';
+  // 코드블록 포함 → 복잡
+  if (raw.includes('\`\`\`')) return 'complex';
+  // 파일 경로/확장자 언급 → 복잡
+  if (/[\w./-]+\.(ts|tsx|js|jsx|py|go|rs|java|c|cpp|h|json|md|css|html|sh)\b/.test(t)) return 'complex';
+  // 복잡 작업 키워드 → 복잡
+  const complexWords = [
+    '리팩터','리팩토링','디버그','디버깅','설계','아키텍','분석','최적화','구현','알고리즘',
+    '마이그레이','테스트 작성','전체','모든','여러 파일','단계별','스텝',
+    'refactor','debug','architect','implement','optimize','analyze','algorithm','migrate','step by step','entire','all files',
+  ];
+  if (complexWords.some((w) => t.includes(w))) return 'complex';
+
+  // 그 외(짧은 질문, 단순 조회, 인사, 간단 수정 등) → flash
+  return 'simple';
 }
 
 function getModel() {
