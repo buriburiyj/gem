@@ -23,7 +23,28 @@ function formatTok(n) {
         return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
     return String(n);
 }
-export function ClaudeSpinner({ startTime, tokens }) {
+function formatElapsed(sec) {
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    if (h > 0)
+        return h + 'h ' + m + 'm ' + s + 's';
+    if (m > 0)
+        return m + 'm ' + s + 's';
+    return s + 's';
+}
+const TOOL_WORDS = {
+    read_file: 'Reading',
+    write_file: 'Writing',
+    edit_file: 'Editing',
+    bash: 'Running',
+    glob: 'Globbing',
+    grep: 'Searching',
+    ls: 'Listing',
+    web_search: 'Searching the web',
+    skill: 'Applying skill',
+};
+export function ClaudeSpinner({ startTime, tokens, activeTool }) {
     const [frame, setFrame] = useState(0);
     const [word] = useState(() => WORDS[Math.floor(Math.random() * WORDS.length)]);
     const [elapsed, setElapsed] = useState(0);
@@ -32,6 +53,6 @@ export function ClaudeSpinner({ startTime, tokens }) {
         const b = setInterval(() => setElapsed(Math.floor((Date.now() - startTime) / 1000)), 1000);
         return () => { clearInterval(a); clearInterval(b); };
     }, [startTime]);
-    return (_jsxs(Text, { children: [_jsx(Text, { color: "#D77757", children: FRAMES[frame] }), _jsxs(Text, { color: "#D77757", children: [' ' + word, "\u2026"] }), _jsx(Text, { dimColor: true, children: ` (${elapsed}s${tokens ? ` · ↑ ${formatTok(tokens)} tokens` : ''} · esc to interrupt)` })] }));
+    return (_jsxs(Text, { children: [_jsx(Text, { color: "#D77757", children: FRAMES[frame] }), _jsxs(Text, { color: "#D77757", children: [' ' + (activeTool && TOOL_WORDS[activeTool] ? TOOL_WORDS[activeTool] : word), "\u2026"] }), _jsx(Text, { dimColor: true, children: ` (${formatElapsed(elapsed)}${tokens ? ` · ↑ ${formatTok(tokens)} tokens` : ''} · esc to interrupt)` })] }));
 }
 //# sourceMappingURL=spinner.js.map

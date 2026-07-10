@@ -1195,7 +1195,13 @@ function App({ initialSession, initialInput }: { initialSession?: Session | null
       {!pending && (
         <Box marginTop={1} borderStyle="round" borderColor={busy ? colors.signature : 'gray'} paddingX={1}>
           {busy ? (
-            <Box><ClaudeSpinner startTime={busyStart} tokens={u.totalTokens} /></Box>
+            <Box><ClaudeSpinner startTime={busyStart} tokens={u.totalTokens} activeTool={(() => {
+              for (let k = history.length - 1; k >= 0; k--) {
+                const it = history[k];
+                if (it.kind === 'tool_call') return it.result === undefined ? it.name : undefined;
+              }
+              return undefined;
+            })()} /></Box>
           ) : (
             <MentionInput
               value={input}

@@ -25,7 +25,28 @@ function formatTok(n: number): string {
   return String(n);
 }
 
-export function ClaudeSpinner({ startTime, tokens }: { startTime: number; tokens?: number }) {
+function formatElapsed(sec: number): string {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h > 0) return h + 'h ' + m + 'm ' + s + 's';
+  if (m > 0) return m + 'm ' + s + 's';
+  return s + 's';
+}
+
+const TOOL_WORDS: Record<string, string> = {
+  read_file: 'Reading',
+  write_file: 'Writing',
+  edit_file: 'Editing',
+  bash: 'Running',
+  glob: 'Globbing',
+  grep: 'Searching',
+  ls: 'Listing',
+  web_search: 'Searching the web',
+  skill: 'Applying skill',
+};
+
+export function ClaudeSpinner({ startTime, tokens, activeTool }: { startTime: number; tokens?: number; activeTool?: string }) {
   const [frame, setFrame] = useState(0);
   const [word] = useState(() => WORDS[Math.floor(Math.random() * WORDS.length)]);
   const [elapsed, setElapsed] = useState(0);
@@ -39,8 +60,8 @@ export function ClaudeSpinner({ startTime, tokens }: { startTime: number; tokens
   return (
     <Text>
       <Text color="#D77757">{FRAMES[frame]}</Text>
-      <Text color="#D77757">{' ' + word}…</Text>
-      <Text dimColor>{` (${elapsed}s${tokens ? ` · ↑ ${formatTok(tokens)} tokens` : ''} · esc to interrupt)`}</Text>
+      <Text color="#D77757">{' ' + (activeTool && TOOL_WORDS[activeTool] ? TOOL_WORDS[activeTool] : word)}…</Text>
+      <Text dimColor>{` (${formatElapsed(elapsed)}${tokens ? ` · ↑ ${formatTok(tokens)} tokens` : ''} · esc to interrupt)`}</Text>
     </Text>
   );
 }
