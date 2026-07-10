@@ -211,6 +211,9 @@ function App({ initialSession, initialInput }) {
     const [abortController, setAbortController] = useState(null);
     const [mode, setModeState] = useState(getMode());
     const [modeChanged, setModeChanged] = useState(false);
+    const [askContinue, setAskContinue] = useState(false);
+    const [continueSel, setContinueSel] = useState(0); // 0=계속, 1=중단
+    const askedThisRunRef = React.useRef(false);
     const [showTranscript, setShowTranscript] = useState(false);
     const [showSearch, setShowSearch] = useState(false);
     const [showRewind, setShowRewind] = useState(false);
@@ -218,6 +221,27 @@ function App({ initialSession, initialInput }) {
     const lastCtrlCRef = React.useRef(0);
     const [ctrlCHint, setCtrlCHint] = useState(false);
     const [pending, setPending] = useState(null);
+    // WAIT_TIMEOUT_EFFECT: 응답이 너무 오래 걸리면 계속 기다릴지 물어봄
+    useEffect(() => {
+        if (!busy) {
+            setAskContinue(false);
+            setContinueSel(0);
+            askedThisRunRef.current = false;
+            return;
+        }
+        const route = getGeminiRoute();
+        const limitMs = route === 'pro' ? 300_000 : 120_000;
+        const timer = setInterval(() => {
+            if (askedThisRunRef.current)
+                return;
+            if (Date.now() - busyStart >= limitMs) {
+                askedThisRunRef.current = true;
+                setContinueSel(0);
+                setAskContinue(true);
+            }
+        }, 1000);
+        return () => clearInterval(timer);
+    }, [busy, busyStart]);
     const [inputHistory, setInputHistory] = useState([]);
     const [sessionId] = useState(() => newSessionId());
     const [provider, setProviderState] = useState(getProvider());
@@ -322,6 +346,18 @@ function App({ initialSession, initialInput }) {
             setTimeout(() => setModeChanged(false), 2500);
         }
     }, { isActive: pending !== null || !busy });
+    // WAIT_CONTINUE_INPUT: 계속 기다리기/중단 선택
+    useInput((_c, key) => {
+        if (key.upArrow || key.downArrow) {
+            setContinueSel((v) => (v === 0 ? 1 : 0));
+        }
+        else if (key.return) {
+            if (continueSel === 1) {
+                abortController?.abort();
+            }
+            setAskContinue(false);
+        }
+    }, { isActive: busy && askContinue });
     useInput((_inputChar, key) => {
         if (key.escape && busy && abortController) {
             abortController.abort();
@@ -939,14 +975,14 @@ function App({ initialSession, initialInput }) {
                     return (_jsxs(Box, { marginTop: 1, children: [_jsx(Text, { color: "red", children: '⏺ ' }), _jsx(Text, { color: "red", children: item.text })] }, i));
                 }
                 return (_jsx(Box, { marginTop: 1, flexDirection: "column", children: item.text.split('\n').map((line, j) => (_jsx(Box, { children: _jsx(Text, { dimColor: true, children: line }) }, j))) }, i));
-            }), pending && (_jsxs(Box, { marginTop: 1, flexDirection: "column", borderStyle: "round", borderColor: "yellow", paddingX: 1, children: [_jsxs(Box, { children: [_jsx(Text, { color: "yellow", bold: true, children: '⚠ 승인 필요: ' }), _jsx(Text, { bold: true, children: pending.toolName })] }), _jsx(Box, { children: _jsx(Text, { children: pending.summary }) }), pending.detail && (_jsx(Box, { marginTop: 1, flexDirection: "column", children: pending.detail.split('\n').map((l, k) => (_jsx(Text, { dimColor: true, children: l }, k))) })), _jsxs(Box, { marginTop: 1, children: [_jsx(Text, { color: "green", children: "y" }), _jsx(Text, { dimColor: true, children: "=\uC2B9\uC778  " }), _jsx(Text, { color: "red", children: "n" }), _jsx(Text, { dimColor: true, children: "=\uAC70\uBD80  " }), _jsx(Text, { color: "cyan", children: "a" }), _jsx(Text, { dimColor: true, children: "=\uC138\uC158 \uC790\uB3D9 \uC2B9\uC778" })] })] })), !pending && (_jsx(Box, { marginTop: 1, borderStyle: "round", borderColor: busy ? colors.signature : 'gray', paddingX: 1, children: busy ? (_jsx(Box, { children: _jsx(ClaudeSpinner, { startTime: busyStart, tokens: u.totalTokens, activeTool: (() => {
-                            for (let k = history.length - 1; k >= 0; k--) {
-                                const it = history[k];
-                                if (it.kind === 'tool_call')
-                                    return it.result === undefined ? it.name : undefined;
-                            }
-                            return undefined;
-                        })() }) })) : (_jsx(MentionInput, { value: input, onChange: setInput, onSubmit: handleSubmit, placeholder: "\uBB34\uC5C7\uC744 \uB3C4\uC640\uB4DC\uB9B4\uAE4C\uC694?", commands: SLASH_COMMANDS, history: inputHistory })) })), _jsx(Box, { paddingX: 1, children: _jsx(Text, { dimColor: true, children: ctrlCHint ? '한 번 더 Ctrl+C를 누르면 종료됩니다' : '? for shortcuts' }) }), _jsxs(Box, { marginTop: 1, paddingX: 1, children: [_jsxs(Text, { color: modeColor(mode), bold: modeChanged, children: ["\u23F5\u23F5 ", modeLabel(mode), modeChanged ? '  ◄ shift+tab' : ''] }), _jsx(Text, { dimColor: true, children: ' · ' }), _jsxs(Text, { color: colors.signature, children: ["\u25C6 ", provider, geminiSuffix] }), _jsx(Text, { dimColor: true, children: ' · ' }), _jsxs(Text, { dimColor: true, children: ["\uD83D\uDCC1 ", path.basename(process.cwd())] }), _jsx(Text, { dimColor: true, children: ' · ' }), _jsxs(Text, { dimColor: true, children: ["\u26A1 ", formatTokens(u.totalTokens), " \u00B7 ", u.turns, "t"] })] })] }));
+            }), pending && (_jsxs(Box, { marginTop: 1, flexDirection: "column", borderStyle: "round", borderColor: "yellow", paddingX: 1, children: [_jsxs(Box, { children: [_jsx(Text, { color: "yellow", bold: true, children: '⚠ 승인 필요: ' }), _jsx(Text, { bold: true, children: pending.toolName })] }), _jsx(Box, { children: _jsx(Text, { children: pending.summary }) }), pending.detail && (_jsx(Box, { marginTop: 1, flexDirection: "column", children: pending.detail.split('\n').map((l, k) => (_jsx(Text, { dimColor: true, children: l }, k))) })), _jsxs(Box, { marginTop: 1, children: [_jsx(Text, { color: "green", children: "y" }), _jsx(Text, { dimColor: true, children: "=\uC2B9\uC778  " }), _jsx(Text, { color: "red", children: "n" }), _jsx(Text, { dimColor: true, children: "=\uAC70\uBD80  " }), _jsx(Text, { color: "cyan", children: "a" }), _jsx(Text, { dimColor: true, children: "=\uC138\uC158 \uC790\uB3D9 \uC2B9\uC778" })] })] })), !pending && (_jsx(Box, { marginTop: 1, borderStyle: "round", borderColor: busy ? colors.signature : 'gray', paddingX: 1, children: busy ? (_jsxs(Box, { children: [_jsx(ClaudeSpinner, { startTime: busyStart, tokens: u.totalTokens, activeTool: (() => {
+                                for (let k = history.length - 1; k >= 0; k--) {
+                                    const it = history[k];
+                                    if (it.kind === 'tool_call')
+                                        return it.result === undefined ? it.name : undefined;
+                                }
+                                return undefined;
+                            })() }), askContinue && (_jsxs(Box, { flexDirection: "column", marginLeft: 2, children: [_jsx(Text, { color: colors.signature, children: "\uC751\uB2F5\uC774 \uC624\uB798 \uAC78\uB9AC\uACE0 \uC788\uC5B4\uC694. \uACC4\uC18D \uAE30\uB2E4\uB9B4\uAE4C\uC694?" }), _jsxs(Text, { color: continueSel === 0 ? colors.signature : undefined, children: [continueSel === 0 ? '❯ ' : '  ', "\u23F3 \uACC4\uC18D \uAE30\uB2E4\uB9AC\uAE30"] }), _jsxs(Text, { color: continueSel === 1 ? colors.error : undefined, children: [continueSel === 1 ? '❯ ' : '  ', "\u2715 \uC911\uB2E8\uD558\uAE30"] }), _jsx(Text, { dimColor: true, children: "\u2191/\u2193 \uC120\uD0DD \u00B7 Enter \uD655\uC815" })] }))] })) : (_jsx(MentionInput, { value: input, onChange: setInput, onSubmit: handleSubmit, placeholder: "\uBB34\uC5C7\uC744 \uB3C4\uC640\uB4DC\uB9B4\uAE4C\uC694?", commands: SLASH_COMMANDS, history: inputHistory })) })), _jsx(Box, { paddingX: 1, children: _jsx(Text, { dimColor: true, children: ctrlCHint ? '한 번 더 Ctrl+C를 누르면 종료됩니다' : '? for shortcuts' }) }), _jsxs(Box, { marginTop: 1, paddingX: 1, children: [_jsxs(Text, { color: modeColor(mode), bold: modeChanged, children: ["\u23F5\u23F5 ", modeLabel(mode), modeChanged ? '  ◄ shift+tab' : ''] }), _jsx(Text, { dimColor: true, children: ' · ' }), _jsxs(Text, { color: colors.signature, children: ["\u25C6 ", provider, geminiSuffix] }), _jsx(Text, { dimColor: true, children: ' · ' }), _jsxs(Text, { dimColor: true, children: ["\uD83D\uDCC1 ", path.basename(process.cwd())] }), _jsx(Text, { dimColor: true, children: ' · ' }), _jsxs(Text, { dimColor: true, children: ["\u26A1 ", formatTokens(u.totalTokens), " \u00B7 ", u.turns, "t"] })] })] }));
 }
 async function main() {
     const args = process.argv.slice(2);

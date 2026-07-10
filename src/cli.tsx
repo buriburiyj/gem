@@ -396,6 +396,9 @@ function App({ initialSession, initialInput }: { initialSession?: Session | null
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [mode, setModeState] = useState<PermissionMode>(getMode());
   const [modeChanged, setModeChanged] = useState(false);
+  const [askContinue, setAskContinue] = useState(false);
+  const [continueSel, setContinueSel] = useState(0); // 0=계속, 1=중단
+  const askedThisRunRef = React.useRef(false);
   const [showTranscript, setShowTranscript] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [showRewind, setShowRewind] = useState(false);
@@ -403,6 +406,27 @@ function App({ initialSession, initialInput }: { initialSession?: Session | null
   const lastCtrlCRef = React.useRef<number>(0);
   const [ctrlCHint, setCtrlCHint] = useState(false);
   const [pending, setPending] = useState<ApprovalRequest | null>(null);
+
+  // WAIT_TIMEOUT_EFFECT: 응답이 너무 오래 걸리면 계속 기다릴지 물어봄
+  useEffect(() => {
+    if (!busy) {
+      setAskContinue(false);
+      setContinueSel(0);
+      askedThisRunRef.current = false;
+      return;
+    }
+    const route = getGeminiRoute();
+    const limitMs = route === 'pro' ? 300_000 : 120_000;
+    const timer = setInterval(() => {
+      if (askedThisRunRef.current) return;
+      if (Date.now() - busyStart >= limitMs) {
+        askedThisRunRef.current = true;
+        setContinueSel(0);
+        setAskContinue(true);
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [busy, busyStart]);
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const [sessionId] = useState<string>(() => newSessionId());
   const [provider, setProviderState] = useState(getProvider());
@@ -506,6 +530,21 @@ function App({ initialSession, initialInput }: { initialSession?: Session | null
       }
     },
     { isActive: pending !== null || !busy },
+  );
+
+  // WAIT_CONTINUE_INPUT: 계속 기다리기/중단 선택
+  useInput(
+    (_c, key) => {
+      if (key.upArrow || key.downArrow) {
+        setContinueSel((v) => (v === 0 ? 1 : 0));
+      } else if (key.return) {
+        if (continueSel === 1) {
+          abortController?.abort();
+        }
+        setAskContinue(false);
+      }
+    },
+    { isActive: busy && askContinue },
   );
 
   useInput(
@@ -1201,7 +1240,21 @@ function App({ initialSession, initialInput }: { initialSession?: Session | null
                 if (it.kind === 'tool_call') return it.result === undefined ? it.name : undefined;
               }
               return undefined;
-            })()} /></Box>
+            })()} />
+              {askContinue && (
+                <Box flexDirection="column" marginLeft={2}>
+                  {/* WAIT_CONTINUE_UI */}
+                  <Text color={colors.signature}>응답이 오래 걸리고 있어요. 계속 기다릴까요?</Text>
+                  <Text color={continueSel === 0 ? colors.signature : undefined}>
+                    {continueSel === 0 ? '❯ ' : '  '}⏳ 계속 기다리기
+                  </Text>
+                  <Text color={continueSel === 1 ? colors.error : undefined}>
+                    {continueSel === 1 ? '❯ ' : '  '}✕ 중단하기
+                  </Text>
+                  <Text dimColor>↑/↓ 선택 · Enter 확정</Text>
+                </Box>
+              )}
+            </Box>
           ) : (
             <MentionInput
               value={input}
