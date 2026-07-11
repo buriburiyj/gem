@@ -4,7 +4,7 @@
   "description": "Claude Code clone powered by Gemini (with Groq fallback)",
   "type": "module",
   "bin": {
-    "claude": "./dist/cli.js"
+    "gm": "./dist/cli.js"
   },
   "scripts": {
     "build": "tsc",

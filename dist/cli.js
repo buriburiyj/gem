@@ -5,7 +5,7 @@ import { render, Box, Text, useApp, useInput } from 'ink';
 import path from 'node:path';
 import { chat, getProvider, setProvider, clearSystemCache, } from './llm/client.js';
 import { spawn } from 'node:child_process';
-import { getUsage, getUsageByProvider, resetUsage, estimateCost, formatCost, formatTokensCompact } from './llm/usage.js';
+import { getUsage, getPersistentUsage, getUsageByProvider, resetUsage, estimateCost, formatCost, formatTokensCompact } from './llm/usage.js';
 import { getMode, cycleMode, modeLabel, modeColor, } from './permissions/mode.js';
 import { bus } from './ui/events.js';
 import { ClaudeSpinner } from './ui/spinner.js';
@@ -534,6 +534,19 @@ function App({ initialSession, initialInput }) {
                 }
                 lines.push('  ─────────────────────────────');
                 lines.push('  Total: ' + formatCost(totalUsd));
+            }
+            // 껐다 켜도 유지되는 누적 사용량
+            {
+                const pu = getPersistentUsage();
+                const fmt = (x) => 'total:' + formatTokensCompact(x.totalTokens).padStart(7) +
+                    '  (in:' + formatTokensCompact(x.inputTokens) +
+                    ' out:' + formatTokensCompact(x.outputTokens) +
+                    ' turns:' + x.turns + ')';
+                lines.push('');
+                lines.push('오늘 사용량:');
+                lines.push('  ' + fmt(pu.today));
+                lines.push('전체 누적:');
+                lines.push('  ' + fmt(pu.total));
             }
             setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: lines.join('\n') }]);
             setInput('');

@@ -10,7 +10,7 @@ import {
   clearSystemCache,
 } from './llm/client.js';
 import { spawn } from 'node:child_process';
-import { getUsage, getUsageByProvider, resetUsage, estimateCost, formatCost, formatTokensCompact } from './llm/usage.js';
+import { getUsage, getPersistentUsage, getUsageByProvider, resetUsage, estimateCost, formatCost, formatTokensCompact } from './llm/usage.js';
 import {
   getMode,
   cycleMode,
@@ -722,6 +722,20 @@ function App({ initialSession, initialInput }: { initialSession?: Session | null
         }
         lines.push('  ─────────────────────────────');
         lines.push('  Total: ' + formatCost(totalUsd));
+      }
+      // 껐다 켜도 유지되는 누적 사용량
+      {
+        const pu = getPersistentUsage();
+        const fmt = (x: typeof pu.today) =>
+          'total:' + formatTokensCompact(x.totalTokens).padStart(7) +
+          '  (in:' + formatTokensCompact(x.inputTokens) +
+          ' out:' + formatTokensCompact(x.outputTokens) +
+          ' turns:' + x.turns + ')';
+        lines.push('');
+        lines.push('오늘 사용량:');
+        lines.push('  ' + fmt(pu.today));
+        lines.push('전체 누적:');
+        lines.push('  ' + fmt(pu.total));
       }
       setHistory((h) => [...h, { kind: 'user', text: trimmed }, { kind: 'info', text: lines.join('\n') }]);
       setInput('');

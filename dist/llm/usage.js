@@ -1,4 +1,72 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 const usage = {};
+// ---- 영속 누적(껐다 켜도 유지) ----
+const USAGE_FILE = path.join(os.homedir(), '.claude', 'usage.json');
+function emptyUsage() {
+    return { inputTokens: 0, outputTokens: 0, totalTokens: 0, turns: 0 };
+}
+function todayStr() {
+    return new Date().toISOString().slice(0, 10);
+}
+let persist = { total: emptyUsage(), today: emptyUsage(), todayDate: todayStr() };
+try {
+    const raw = fs.readFileSync(USAGE_FILE, 'utf8');
+    const loaded = JSON.parse(raw);
+    if (loaded && loaded.total) {
+        persist = {
+            total: { ...emptyUsage(), ...loaded.total },
+            today: { ...emptyUsage(), ...(loaded.today ?? {}) },
+            todayDate: loaded.todayDate ?? todayStr(),
+        };
+    }
+}
+catch { /* 파일 없거나 손상 → 기본값 */ }
+// 날짜 바뀌었으면 오늘 리셋
+if (persist.todayDate !== todayStr()) {
+    persist.today = emptyUsage();
+    persist.todayDate = todayStr();
+}
+let saveTimer = null;
+function schedulePersistSave() {
+    if (saveTimer)
+        return;
+    saveTimer = setTimeout(() => {
+        saveTimer = null;
+        try {
+            fs.mkdirSync(path.dirname(USAGE_FILE), { recursive: true });
+            fs.writeFileSync(USAGE_FILE, JSON.stringify(persist, null, 2));
+        }
+        catch { /* 저장 실패는 조용히 무시 */ }
+    }, 1000);
+}
+function addToPersist(u) {
+    if (persist.todayDate !== todayStr()) {
+        persist.today = emptyUsage();
+        persist.todayDate = todayStr();
+    }
+    const inp = u.inputTokens ?? 0;
+    const out = u.outputTokens ?? 0;
+    const tot = u.totalTokens ?? inp + out;
+    for (const bucket of [persist.total, persist.today]) {
+        bucket.inputTokens += inp;
+        bucket.outputTokens += out;
+        bucket.totalTokens += tot;
+        bucket.turns += 1;
+    }
+    schedulePersistSave();
+}
+export function getPersistentUsage() {
+    return { total: { ...persist.total }, today: { ...persist.today } };
+}
+export function resetPersistentUsage() {
+    persist = { total: emptyUsage(), today: emptyUsage(), todayDate: todayStr() };
+    try {
+        fs.writeFileSync(USAGE_FILE, JSON.stringify(persist, null, 2));
+    }
+    catch { }
+}
 function ensure(provider) {
     if (!usage[provider]) {
         usage[provider] = { inputTokens: 0, outputTokens: 0, totalTokens: 0, turns: 0 };
@@ -11,6 +79,7 @@ export function addUsage(provider, u) {
     p.outputTokens += u.outputTokens ?? 0;
     p.totalTokens += u.totalTokens ?? (u.inputTokens ?? 0) + (u.outputTokens ?? 0);
     p.turns += 1;
+    addToPersist(u);
 }
 export function getUsageByProvider() {
     return { ...usage };
